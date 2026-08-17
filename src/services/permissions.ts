@@ -3,7 +3,7 @@
  * Handles role-based feature access control
  */
 
-import { GuildMember } from 'discord.js';
+import { GuildMember, PermissionsBitField } from 'discord.js';
 import { EXTRA_ROLE_ID, FEATURED_EXTRA_ROLE_ID, SUPPORTING_CAST_ROLE_ID, PERMISSIONS } from '../config';
 import { logger } from '../utils/logger';
 
@@ -39,10 +39,19 @@ export class PermissionService {
   }
 
   /**
-   * Check if user has any Extra-tier role (memory eligible)
+   * Check if user is staff (server Administrator).
+   * Staff bypass things like rate limiting and are always memory eligible.
+   */
+  isStaff(member: GuildMember): boolean {
+    return member.permissions.has(PermissionsBitField.Flags.Administrator);
+  }
+
+  /**
+   * Check if user has any Extra-tier role (memory eligible), or is staff
    */
   hasMemoryEligibility(member: GuildMember): boolean {
-    return this.isExtra(member) || 
+    return this.isStaff(member) ||
+           this.isExtra(member) || 
            this.isFeaturedExtra(member) || 
            this.isSupportingCast(member);
   }
@@ -71,6 +80,7 @@ export class PermissionService {
    * Get user's role tier for display/logging purposes
    */
   getUserRoleTier(member: GuildMember): string {
+    if (this.isStaff(member)) return 'staff';
     if (this.isSupportingCast(member)) return 'supporting_cast';
     if (this.isFeaturedExtra(member)) return 'featured_extra';
     if (this.isExtra(member)) return 'extra';

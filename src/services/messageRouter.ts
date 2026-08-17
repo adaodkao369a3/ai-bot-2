@@ -3,7 +3,7 @@
  * Central message handling pipeline that coordinates all services
  */
 
-import { Message, GuildMember } from 'discord.js';
+import { Message, GuildMember, EmbedBuilder } from 'discord.js';
 import { botStateService } from './botState';
 import { blacklistService } from './blacklist';
 import { rateLimitService } from './rateLimit';
@@ -15,6 +15,7 @@ import { addressingService } from './addressing';
 import { personalityService } from './personality';
 import { AIService, createAIService } from './ai';
 import { responseSanitizer } from './responseSanitizer';
+import { memeService } from './meme';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
 
@@ -75,19 +76,31 @@ export class MessageRouter {
         return;
       }
 
-      // Step 4: Check rate limit
-      const rateLimitCheck = rateLimitService.canInteract(userId);
-      if (!rateLimitCheck.allowed) {
-        logger.debug(`User ${userId} is rate limited`);
-        if (rateLimitCheck.resetTime) {
-          const cooldownMessage = personalityService.getCooldownMessage(rateLimitCheck.resetTime);
-          await message.reply(cooldownMessage);
-        }
-        return;
+      // Step 4: Fetch guild member (needed to know if they're staff before rate limiting)
+      let member: GuildMember | null = null;
+      try {
+        member = await message.guild.members.fetch(userId);
+      } catch (error) {
+        logger.warn('Failed to fetch guild member', { userId, guildId });
       }
 
-      // Step 5: Record the interaction
-      rateLimitService.recordInteraction(userId);
+      const isStaff = member ? permissionService.isStaff(member) : false;
+
+      // Step 5: Check rate limit (staff/admins bypass this entirely)
+      if (!isStaff) {
+        const rateLimitCheck = rateLimitService.canInteract(userId);
+        if (!rateLimitCheck.allowed) {
+          logger.debug(`User ${userId} is rate limited`);
+          if (rateLimitCheck.resetTime) {
+            const cooldownMessage = personalityService.getCooldownMessage(rateLimitCheck.resetTime);
+            await message.reply(cooldownMessage);
+          }
+          return;
+        }
+
+        // Record the interaction
+        rateLimitService.recordInteraction(userId);
+      }
 
       // Step 6: Add message to conversation context
       conversationContextService.addMessage(
@@ -102,13 +115,6 @@ export class MessageRouter {
       const cleanContent = addressingService.extractContent(message, botUserId);
 
       // Step 8: Get or create user profile
-      let member: GuildMember | null = null;
-      try {
-        member = await message.guild.members.fetch(userId);
-      } catch (error) {
-        logger.warn('Failed to fetch guild member', { userId, guildId });
-      }
-
       const userProfile = await memoryService.getOrCreateProfile(
         userId,
         guildId,
@@ -158,13 +164,21 @@ export class MessageRouter {
       const conversationContext = conversationContextService.getFormattedContext(channelId);
 
       // Step 14: Generate AI response
-      const aiResponse = await this.aiService.generateResponse({
-        systemPrompt: personalityService.getSystemPrompt(),
-        userMessage: cleanContent,
-        conversationContext,
-        memoryContext,
-        userName: message.author.username
-      });
+      // Show the "Bot Kun is typing..." indicator in Discord while we work,
+      // and keep refreshing it since a typing indicator only lasts ~10s.
+      const stopTyping = this.startTypingIndicator(message);
+      let aiResponse;
+      try {
+        aiResponse = await this.aiService.generateResponse({
+          systemPrompt: personalityService.getSystemPrompt(),
+          userMessage: cleanContent,
+          conversationContext,
+          memoryContext,
+          userName: message.author.username
+        });
+      } finally {
+        stopTyping();
+      }
 
       // Step 15: Handle AI response
       if (aiResponse.success && aiResponse.content) {
@@ -188,6 +202,12 @@ export class MessageRouter {
           }
         });
         logger.info(`Bot Kun responded to user ${userId} in guild ${guildId}`);
+
+        // Step 16: Maybe drop an actual meme (from a meme API, not the AI)
+        // after a couple exchanges with this person.
+        if (memeService.shouldDropMeme(userId)) {
+          await this.dropMeme(message);
+        }
       } else {
         // AI failed, send error message
         const errorMessage = personalityService.getErrorMessage();
@@ -217,6 +237,61 @@ export class MessageRouter {
   }
 
   /**
+   * Start sending the "Bot Kun is typing..." indicator in the channel and
+   * keep refreshing it (Discord's typing indicator only lasts ~10s) until
+   * the returned function is called to stop.
+   */
+  private startTypingIndicator(message: Message): () => void {
+    const channel = message.channel;
+    if (!('sendTyping' in channel)) {
+      return () => {};
+    }
+
+    const sendTyping = () => {
+      channel.sendTyping().catch((error: unknown) => {
+        logger.debug('Failed to send typing indicator', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    };
+
+    // Fire immediately, then refresh every 8s so it doesn't expire mid-response
+    sendTyping();
+    const interval = setInterval(sendTyping, 8000);
+
+    return () => clearInterval(interval);
+  }
+
+  /**
+   * Fetch a real meme from the meme API and post it as an embed
+   */
+  private async dropMeme(message: Message): Promise<void> {
+    try {
+      const meme = await memeService.fetchMeme();
+      if (!meme) {
+        return;
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle(meme.title)
+        .setURL(meme.postLink)
+        .setImage(meme.imageUrl)
+        .setFooter({ text: `r/${meme.subreddit}` })
+        .setColor(0xFFA500);
+
+      const channel = message.channel;
+      if ('send' in channel) {
+        await channel.send({ embeds: [embed] });
+      }
+    } catch (error) {
+      // Never let a meme failure break the conversation
+      logger.warn('Failed to drop meme', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
    * Handle bot commands
    */
   private async handleCommand(message: Message, content: string): Promise<void> {
@@ -239,6 +314,9 @@ export class MessageRouter {
           if (userIdMatch) {
             await this.handleBlacklist(message, userIdMatch[1]);
           }
+        } else {
+          // No target given - show the blacklist list
+          await this.handleListBlacklist(message);
         }
         break;
 
@@ -291,6 +369,54 @@ export class MessageRouter {
         error: error instanceof Error ? error.message : String(error)
       });
       await message.reply('Failed to put Bot Kun to sleep. Try again later.');
+    }
+  }
+
+  /**
+   * Handle ~bl (no target) - show the current blacklist in an embed
+   */
+  private async handleListBlacklist(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    // Same permission tier as adding/removing from the blacklist
+    const member = message.member as GuildMember;
+    if (!permissionService.hasMemoryEligibility(member)) {
+      await message.reply('You don\'t have permission to view the blacklist. Nice try though.');
+      return;
+    }
+
+    try {
+      const entries = await blacklistService.getBlacklist(message.guild.id);
+
+      const embed = new EmbedBuilder()
+        .setTitle('🚫 Blacklisted Users')
+        .setColor(0xE74C3C);
+
+      if (entries.length === 0) {
+        embed.setDescription('Nobody\'s blacklisted right now.');
+      } else {
+        // <@id> renders as a clickable username in an embed without
+        // actually pinging/notifying the person (embeds don't trigger pings)
+        const lines = entries.map(entry => {
+          const when = `<t:${Math.floor(entry.createdAt.getTime() / 1000)}:d>`;
+          const reason = entry.reason ? ` — ${entry.reason}` : '';
+          return `<@${entry.userId}> (blacklisted ${when}${reason})`;
+        });
+        embed.setDescription(lines.join('\n'));
+        embed.setFooter({ text: `${entries.length} blacklisted user${entries.length === 1 ? '' : 's'}` });
+      }
+
+      await message.reply({
+        embeds: [embed],
+        allowedMentions: {
+          parse: [] // Renders mentions as clickable but does not ping anyone
+        }
+      });
+    } catch (error) {
+      logger.error('Failed to list blacklist', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply('Failed to fetch the blacklist. Try again later.');
     }
   }
 

@@ -10,10 +10,16 @@ class MockGuildMember {
   roles: {
     cache: Map<string, any>;
   };
+  permissions: {
+    has: (flag: any) => boolean;
+  };
 
-  constructor(roleIds: string[] = []) {
+  constructor(roleIds: string[] = [], isAdmin: boolean = false) {
     this.roles = {
       cache: new Map(roleIds.map(id => [id, { id }]))
+    };
+    this.permissions = {
+      has: () => isAdmin
     };
   }
 }
@@ -133,6 +139,30 @@ describe('PermissionService', () => {
     it('should return regular for regular user', () => {
       const member = new MockGuildMember(['123456']);
       expect(permissionService.getUserRoleTier(member as any)).toBe('regular');
+    });
+
+    it('should return staff for an admin with no Extra-tier role', () => {
+      const member = new MockGuildMember([], true);
+      expect(permissionService.getUserRoleTier(member as any)).toBe('staff');
+    });
+  });
+
+  describe('isStaff', () => {
+    it('should return true for a member with Administrator permission', () => {
+      const member = new MockGuildMember([], true);
+      expect(permissionService.isStaff(member as any)).toBe(true);
+    });
+
+    it('should return false for a member without Administrator permission', () => {
+      const member = new MockGuildMember(['123456'], false);
+      expect(permissionService.isStaff(member as any)).toBe(false);
+    });
+  });
+
+  describe('hasMemoryEligibility for staff', () => {
+    it('should return true for an admin with no Extra-tier role', () => {
+      const member = new MockGuildMember([], true);
+      expect(permissionService.hasMemoryEligibility(member as any)).toBe(true);
     });
   });
 });

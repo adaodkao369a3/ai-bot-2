@@ -11,6 +11,20 @@ interface BlacklistRow {
   guild_id: string;
 }
 
+interface BlacklistEntryRow {
+  user_id: string;
+  blacklisted_by: string;
+  reason: string | null;
+  created_at: string;
+}
+
+export interface BlacklistEntry {
+  userId: string;
+  blacklistedBy: string;
+  reason: string | null;
+  createdAt: Date;
+}
+
 export class BlacklistService {
   private cache: Map<string, Set<string>> = new Map(); // guildId -> Set of userIds
   private cacheInitialized = false;
@@ -122,6 +136,35 @@ export class BlacklistService {
         error: error instanceof Error ? error.message : String(error)
       });
       throw error;
+    }
+  }
+
+  /**
+   * Get the full list of blacklisted users for a guild, most recent first
+   */
+  async getBlacklist(guildId: string): Promise<BlacklistEntry[]> {
+    try {
+      const pool = getPool();
+      const { rows } = await pool.query<BlacklistEntryRow>(
+        `SELECT user_id, blacklisted_by, reason, created_at
+         FROM blacklist
+         WHERE guild_id = $1
+         ORDER BY created_at DESC`,
+        [guildId]
+      );
+
+      return rows.map(row => ({
+        userId: row.user_id,
+        blacklistedBy: row.blacklisted_by,
+        reason: row.reason,
+        createdAt: new Date(row.created_at)
+      }));
+    } catch (error) {
+      logger.error('Failed to fetch blacklist', {
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return [];
     }
   }
 

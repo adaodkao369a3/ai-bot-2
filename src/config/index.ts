@@ -12,7 +12,15 @@ export const SUPPORTING_CAST_ROLE_ID = "1535285344952651829";
 
 // Rate limiting configuration
 export const RATE_LIMIT_MAX_INTERACTIONS = 10;
-export const RATE_LIMIT_WINDOW_MS = 20 * 60 * 1000; // 20 minutes
+export const RATE_LIMIT_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
+
+// Meme configuration
+// After a random number of exchanges (between MIN and MAX, inclusive) with a
+// user, Bot Kun drops an actual meme pulled from a meme API.
+export const MEME_API_URL = "https://meme-api.com/gimme";
+export const MEME_MIN_MESSAGES_BEFORE_DROP = 2;
+export const MEME_MAX_MESSAGES_BEFORE_DROP = 3;
+export const MEME_FETCH_TIMEOUT_MS = 5000;
 
 // Memory configuration
 export const MEMORY_ACTIVE_MEMBER_CAP = 25;
