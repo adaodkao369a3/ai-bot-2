@@ -16,6 +16,7 @@ import { personalityService } from './personality';
 import { AIService, createAIService } from './ai';
 import { responseSanitizer } from './responseSanitizer';
 import { memeService } from './meme';
+import { mediaService } from './media';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
 
@@ -54,29 +55,8 @@ export class MessageRouter {
         return;
       }
 
-      // Step 1: Check if Bot Kun is enabled for this guild
-      const botEnabled = await botStateService.isEnabled(guildId);
-      if (!botEnabled) {
-        logger.debug(`Bot disabled for guild ${guildId}, ignoring message`);
-        return;
-      }
-
-      // Step 2: Check if user is blacklisted
-      const isBlacklisted = await blacklistService.isBlacklisted(userId, guildId);
-      if (isBlacklisted) {
-        logger.debug(`User ${userId} is blacklisted in guild ${guildId}`);
-        // Don't respond to blacklisted users
-        return;
-      }
-
-      // Step 3: Check if message is addressing Bot Kun
-      const isAddressing = await addressingService.isAddressingBot(message, botUserId);
-      if (!isAddressing) {
-        // Not addressing Bot Kun, ignore (Phase 2 only responds when addressed)
-        return;
-      }
-
-      // Step 4: Fetch guild member (needed to know if they're staff before rate limiting)
+      // Fetch the guild member before any gates so staff/admins can bypass
+      // bot-disabled, blacklist, and rate-limit restrictions.
       let member: GuildMember | null = null;
       try {
         member = await message.guild.members.fetch(userId);
@@ -85,6 +65,28 @@ export class MessageRouter {
       }
 
       const isStaff = member ? permissionService.isStaff(member) : false;
+
+      // Step 1: Check if Bot Kun is enabled for this guild.
+      // Staff/admins bypass this gate.
+      const botEnabled = await botStateService.isEnabled(guildId);
+      if (!botEnabled && !isStaff) {
+        logger.debug(`Bot disabled for guild ${guildId}, ignoring message`);
+        return;
+      }
+
+      // Step 2: Check if user is blacklisted.
+      // Staff/admins bypass blacklist restrictions.
+      const isBlacklisted = await blacklistService.isBlacklisted(userId, guildId);
+      if (isBlacklisted && !isStaff) {
+        logger.debug(`User ${userId} is blacklisted in guild ${guildId}`);
+        return;
+      }
+
+      // Step 3: Check if message is addressing Bot Kun
+      const isAddressing = await addressingService.isAddressingBot(message, botUserId);
+      if (!isAddressing) {
+        return;
+      }
 
       // Step 5: Check rate limit (staff/admins bypass this entirely)
       if (!isStaff) {
@@ -103,10 +105,12 @@ export class MessageRouter {
       }
 
       // Step 6: Add message to conversation context
+      const globalDisplayName = message.author.globalName ?? message.author.displayName;
+
       conversationContextService.addMessage(
         channelId,
         userId,
-        message.author.username,
+        globalDisplayName,
         message.content,
         false
       );
@@ -114,12 +118,19 @@ export class MessageRouter {
       // Step 7: Extract actual message content (remove bot name/mention)
       const cleanContent = addressingService.extractContent(message, botUserId);
 
+      // Explicit "I am X / my name is X / call me X" statements are stored
+      // immediately so identity survives restarts and new conversations.
+      const identityName = this.extractIdentityName(cleanContent);
+      if (identityName) {
+        await memoryService.rememberIdentity(userId, guildId, identityName);
+      }
+
       // Step 8: Get or create user profile
       const userProfile = await memoryService.getOrCreateProfile(
         userId,
         guildId,
-        message.author.username,
-        message.member?.displayName || message.author.displayName
+        globalDisplayName,
+        globalDisplayName
       );
 
       // Step 9: Update memory eligibility if we have member info
@@ -130,13 +141,19 @@ export class MessageRouter {
       // Step 10: Update last interaction time
       await memoryService.updateLastInteraction(userId, guildId);
 
+      // Use the freshly fetched Discord roles for this interaction rather
+      // than the profile row from before eligibility was updated.
+      const memoryEligible = member
+        ? permissionService.hasMemoryEligibility(member)
+        : userProfile.memoryEligible;
+
       // Step 11: Extract memory candidates if eligible (non-blocking)
-      if (userProfile.memoryEligible && await memoryService.isInActiveMemoryPool(userId, guildId)) {
+      if (memoryEligible && await memoryService.isInActiveMemoryPool(userId, guildId)) {
         try {
           const conversationContext = conversationContextService.getFormattedContext(channelId);
           const extractionResult = await memoryExtractionService.extractMemories(
             cleanContent,
-            message.author.username,
+            globalDisplayName,
             conversationContext
           );
           
@@ -153,17 +170,35 @@ export class MessageRouter {
         }
       }
 
-      // Step 12: Retrieve relevant memory if eligible
-      let memoryContext = '';
-      if (userProfile.memoryEligible && await memoryService.isInActiveMemoryPool(userId, guildId)) {
+      // Step 12: Identity is always available to the user themselves.
+      // Optional preference/interest memory remains role-gated.
+      const identityMemories = await memoryService.getIdentityMemories(userId, guildId);
+      let memoryContext = [
+        `The user's account-level Discord display name is ${globalDisplayName}.`,
+        memoryService.formatMemoriesForAI(identityMemories)
+      ].filter(Boolean).join('\n');
+
+      if (memoryEligible && await memoryService.isInActiveMemoryPool(userId, guildId)) {
         const memories = await memoryService.getRelevantMemories(userId, guildId);
-        memoryContext = memoryService.formatMemoriesForAI(memories);
+        const generalMemoryContext = memoryService.formatMemoriesForAI(memories);
+        memoryContext = [memoryContext, generalMemoryContext].filter(Boolean).join('\n');
       }
 
       // Step 13: Get conversation context
       const conversationContext = conversationContextService.getFormattedContext(channelId);
 
-      // Step 14: Generate AI response
+      // Step 14: Explicit media requests are handled as one-shot actions.
+      // Do not also generate an AI reply or auto-drop a meme for the same text.
+      const mediaHandled = await this.handleExplicitMediaRequest(
+        message,
+        cleanContent,
+        conversationContext
+      );
+      if (mediaHandled) {
+        return;
+      }
+
+      // Step 15: Generate AI response
       // Show the "Bot Kun is typing..." indicator in Discord while we work,
       // and keep refreshing it since a typing indicator only lasts ~10s.
       const stopTyping = this.startTypingIndicator(message);
@@ -174,7 +209,7 @@ export class MessageRouter {
           userMessage: cleanContent,
           conversationContext,
           memoryContext,
-          userName: message.author.username
+          userName: globalDisplayName
         });
       } finally {
         stopTyping();
@@ -206,7 +241,7 @@ export class MessageRouter {
         // Step 16: Maybe drop an actual meme (from a meme API, not the AI)
         // after a couple exchanges with this person.
         if (memeService.shouldDropMeme(userId)) {
-          await this.dropMeme(message);
+          await this.dropMeme(message, conversationContext);
         }
       } else {
         // AI failed, send error message
@@ -263,32 +298,189 @@ export class MessageRouter {
   }
 
   /**
-   * Fetch a real meme from the meme API and post it as an embed
+   * Handle explicit meme/GIF/YouTube requests. Returns true when the
+   * message was a media request and therefore should not get a second reply.
    */
-  private async dropMeme(message: Message): Promise<void> {
+  private async handleExplicitMediaRequest(
+    message: Message,
+    cleanContent: string,
+    conversationContext: string
+  ): Promise<boolean> {
+    const content = cleanContent.toLowerCase();
+
+    if (this.isMemeRequest(content)) {
+      const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`);
+      if (!meme) {
+        await message.reply({
+          content: 'I tried to find one that fits, but the meme API came up empty.',
+          allowedMentions: { parse: [] }
+        });
+        return true;
+      }
+
+      await message.reply({
+        content: 'Got you — this one fits the vibe.',
+        embeds: [
+          new EmbedBuilder()
+            .setImage(meme.imageUrl)
+            .setColor(0xFFA500)
+        ],
+        allowedMentions: { parse: [] }
+      });
+      return true;
+    }
+
+    const gifAction = this.extractGifAction(content);
+    if (gifAction) {
+      const gif = await mediaService.searchGif(gifAction);
+      if (!gif) {
+        await message.reply({
+          content: `I couldn't find a ${gifAction} GIF right now.`,
+          allowedMentions: { parse: [] }
+        });
+        return true;
+      }
+
+      await message.reply({
+        content: this.getGifText(gifAction),
+        embeds: [
+          new EmbedBuilder()
+            .setImage(gif.url)
+            .setColor(0x9B59B6)
+        ],
+        allowedMentions: { parse: [] }
+      });
+      return true;
+    }
+
+    const youtubeQuery = this.extractYoutubeQuery(content);
+    if (youtubeQuery) {
+      const video = await mediaService.searchYoutube(youtubeQuery);
+      if (!video) {
+        await message.reply({
+          content: 'I couldn\'t pull a YouTube video right now. Check that the YouTube API key is configured.',
+          allowedMentions: { parse: [] }
+        });
+        return true;
+      }
+
+      // IMPORTANT: use the watch URL as message content, not an EmbedBuilder
+      // URL. Discord renders this as its native YouTube video player.
+      await message.reply({
+        content: `Here you go — ${video.title}\nhttps://www.youtube.com/watch?v=${video.videoId}`,
+        allowedMentions: { parse: [] }
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  private isMemeRequest(content: string): boolean {
+    return /(?:pull|show|get|send|give|find|bring|drop|post|want)\b[\s\S]{0,60}\bmeme(?:s)?\b/i.test(content)
+      || /\bmeme(?:s)?\s*(?:please|pls|plz)?$/i.test(content)
+      || /^(?:meme|memes)$/i.test(content);
+  }
+
+  private extractGifAction(content: string): string | null {
+    const actions = [
+      'high five',
+      'hug',
+      'cuddle',
+      'kiss',
+      'punch',
+      'kick',
+      'slap',
+      'pat',
+      'wave',
+      'cry',
+      'laugh',
+      'dance'
+    ];
+
+    for (const action of actions) {
+      const escaped = action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`(?:gif\\s*(?:me)?\\s*)?${escaped}\\s+me\\b`, 'i').test(content)) {
+        return action;
+      }
+    }
+
+    return null;
+  }
+
+  private getGifText(action: string): string {
+    switch (action) {
+      case 'hug':
+      case 'cuddle':
+        return `Come here — ${action} me.`;
+      case 'punch':
+      case 'kick':
+      case 'slap':
+        return `Alright, ${action} me. I asked for this.`;
+      default:
+        return `Say less — ${action} me.`;
+    }
+  }
+
+  private extractYoutubeQuery(content: string): string | null {
+    if (!/\b(?:asmr|youtube|video|song|music|playlist)\b/i.test(content)) {
+      return null;
+    }
+
+    const query = content
+      .replace(/^(?:please\s+)?(?:pull\s+up|show|play|find|get|send|give\s+me|bring\s+me)\s*/i, '')
+      .replace(/\b(?:on\s+)?youtube\b/gi, '')
+      .replace(/\b(?:a|the)\s+(?:video|song|playlist)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return query || null;
+  }
+
+  /**
+   * Fetch a real meme from the meme API and post only the image.
+   * No title, subreddit, Reddit URL, or caption is put inside the embed.
+   */
+  private async dropMeme(message: Message, conversationContext: string): Promise<void> {
     try {
-      const meme = await memeService.fetchMeme();
+      const meme = await memeService.fetchMeme(conversationContext);
       if (!meme) {
         return;
       }
 
-      const embed = new EmbedBuilder()
-        .setTitle(meme.title)
-        .setURL(meme.postLink)
-        .setImage(meme.imageUrl)
-        .setFooter({ text: `r/${meme.subreddit}` })
-        .setColor(0xFFA500);
-
-      const channel = message.channel;
-      if ('send' in channel) {
-        await channel.send({ embeds: [embed] });
-      }
+      await message.reply({
+        content: 'A meme for the current vibe:',
+        embeds: [
+          new EmbedBuilder()
+            .setImage(meme.imageUrl)
+            .setColor(0xFFA500)
+        ],
+        allowedMentions: {
+          parse: []
+        }
+      });
     } catch (error) {
-      // Never let a meme failure break the conversation
       logger.warn('Failed to drop meme', {
         error: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+
+  private extractIdentityName(content: string): string | null {
+    const match = content.match(
+      /^(?:i\\s*(?:am|'m|’m)|im|my\\s+name\\s+is|call\\s+me)\\s+([A-Za-z][A-Za-z0-9'_-]{1,31}(?:\\s+[A-Za-z][A-Za-z0-9'_-]{1,31})?)/i
+    );
+
+    if (!match) {
+      return null;
+    }
+
+    const name = match[1].trim();
+    if (/^(?:not|a|an|the)$/i.test(name)) {
+      return null;
+    }
+
+    return name;
   }
 
   /**
@@ -397,11 +589,12 @@ export class MessageRouter {
       } else {
         // <@id> renders as a clickable username in an embed without
         // actually pinging/notifying the person (embeds don't trigger pings)
-        const lines = entries.map(entry => {
+        const lines = await Promise.all(entries.map(async entry => {
           const when = `<t:${Math.floor(entry.createdAt.getTime() / 1000)}:d>`;
           const reason = entry.reason ? ` — ${entry.reason}` : '';
-          return `<@${entry.userId}> (blacklisted ${when}${reason})`;
-        });
+          const name = await this.getGlobalUserName(message, entry.userId);
+          return `${name} (blacklisted ${when}${reason})`;
+        }));
         embed.setDescription(lines.join('\n'));
         embed.setFooter({ text: `${entries.length} blacklisted user${entries.length === 1 ? '' : 's'}` });
       }
@@ -439,8 +632,9 @@ export class MessageRouter {
         message.guild.id,
         message.author.id
       );
-      await message.reply('User has been blacklisted. They won\'t be bothering me anymore.');
-      logger.info(`User ${targetUser} blacklisted in guild ${message.guild.id} by ${message.author.id}`);
+      const targetName = await this.getGlobalUserName(message, targetUser);
+      await message.reply(`${targetName} has been blacklisted. They won\'t be bothering me anymore.`);
+      logger.info(`User ${targetUser} (${targetName}) blacklisted in guild ${message.guild.id} by ${message.author.id}`);
     } catch (error) {
       logger.error('Failed to blacklist user', {
         error: error instanceof Error ? error.message : String(error)
@@ -464,8 +658,9 @@ export class MessageRouter {
 
     try {
       await blacklistService.removeFromBlacklist(targetUser, message.guild.id);
-      await message.reply('User has been removed from blacklist. They can talk to me again.');
-      logger.info(`User ${targetUser} unblacklisted in guild ${message.guild.id} by ${message.author.id}`);
+      const targetName = await this.getGlobalUserName(message, targetUser);
+      await message.reply(`${targetName} has been removed from blacklist. They can talk to me again.`);
+      logger.info(`User ${targetUser} (${targetName}) unblacklisted in guild ${message.guild.id} by ${message.author.id}`);
     } catch (error) {
       logger.error('Failed to unblacklist user', {
         error: error instanceof Error ? error.message : String(error)
@@ -473,6 +668,23 @@ export class MessageRouter {
       await message.reply('Failed to unblacklist user. Try again later.');
     }
   }
+  /**
+   * Discord User#displayName/globalName is the account-level display name,
+   * not the server nickname and not the username.
+   */
+  private async getGlobalUserName(message: Message, userId: string): Promise<string> {
+    try {
+      const user = await message.client.users.fetch(userId);
+      return user.globalName ?? user.displayName;
+    } catch (error) {
+      logger.warn('Failed to fetch global user name', {
+        userId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return 'User';
+    }
+  }
+
 }
 
 export const messageRouter = new MessageRouter();

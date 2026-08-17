@@ -61,6 +61,11 @@ export class PermissionService {
    * For Phase 2, only memory permission is implemented
    */
   canUse(member: GuildMember, permission: PermissionName): boolean {
+    // Administrators/staff are never feature-gated.
+    if (this.isStaff(member)) {
+      return true;
+    }
+
     switch (permission) {
       case PERMISSIONS.MEMORY:
         return this.hasMemoryEligibility(member);

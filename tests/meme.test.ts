@@ -17,6 +17,13 @@ describe('MemeService', () => {
       expect(memeService.shouldDropMeme('user1')).toBe(false);
     });
 
+    it('should drop exactly on the seventh exchange', () => {
+      for (let i = 0; i < 6; i++) {
+        expect(memeService.shouldDropMeme('user1')).toBe(false);
+      }
+      expect(memeService.shouldDropMeme('user1')).toBe(true);
+    });
+
     it('should drop a meme by the max threshold of exchanges', () => {
       let droppedAtLeastOnce = false;
       for (let i = 0; i < MEME_MAX_MESSAGES_BEFORE_DROP; i++) {

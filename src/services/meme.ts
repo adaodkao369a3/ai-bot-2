@@ -1,8 +1,8 @@
 /**
- * Meme service for Bot Kun v2
- * Tracks how many times each user has talked to Bot Kun and, every 2-3
- * exchanges, drops an actual meme pulled from a public meme API.
- * This is NOT the AI trying to "be meme-ish" - it's a real image post.
+ * Meme service for Bot Kun.
+ * Tracks seven addressed chat exchanges and fetches a real meme from the
+ * meme API. The subreddit is selected from the recent conversation so the
+ * result is at least topically related instead of always being random.
  */
 
 import {
@@ -35,8 +35,6 @@ interface UserMemeState {
 }
 
 export class MemeService {
-  // userId -> tracking state (global per user; not per-channel, matches the
-  // "after 2 or 3 texts with someone" behavior)
   private state: Map<string, UserMemeState> = new Map();
 
   private randomThreshold(): number {
@@ -54,10 +52,6 @@ export class MemeService {
     return entry;
   }
 
-  /**
-   * Record an exchange with a user and return true if it's time to drop a meme.
-   * Resets the counter (with a fresh random threshold) whenever it triggers.
-   */
   shouldDropMeme(userId: string): boolean {
     const entry = this.getOrCreateState(userId);
     entry.countSinceLastMeme++;
@@ -72,57 +66,94 @@ export class MemeService {
   }
 
   /**
-   * Fetch a single meme from the meme API. Filters out NSFW/spoiler results
-   * by retrying a couple times, since this posts straight into a server.
+   * Fetch a meme that roughly matches the supplied conversation.
+   *
+   * meme-api.com supports subreddit-specific requests, so we use simple,
+   * deterministic topic routing rather than pretending a random meme is
+   * semantically relevant.
    */
-  async fetchMeme(): Promise<Meme | null> {
-    const maxAttempts = 3;
+  async fetchMeme(conversationText = ''): Promise<Meme | null> {
+    const subreddits = this.getCandidateSubreddits(conversationText);
+    const maxAttemptsPerSubreddit = 2;
 
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), MEME_FETCH_TIMEOUT_MS);
+    for (const subreddit of subreddits) {
+      for (let attempt = 0; attempt < maxAttemptsPerSubreddit; attempt++) {
+        const meme = await this.fetchFromEndpoint(
+          subreddit === 'memes' ? MEME_API_URL : `${MEME_API_URL}/${subreddit}`
+        );
 
-      try {
-        const response = await fetch(MEME_API_URL, { signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          throw new Error(`Meme API error: ${response.status}`);
+        if (meme) {
+          return meme;
         }
-
-        const data = (await response.json()) as MemeApiResponse;
-
-        if (!data.url || !data.title) {
-          throw new Error('Invalid response format from meme API');
-        }
-
-        if (data.nsfw || data.spoiler) {
-          logger.debug('Skipping NSFW/spoiler meme, retrying', { attempt });
-          continue;
-        }
-
-        return {
-          title: data.title,
-          imageUrl: data.url,
-          postLink: data.postLink,
-          subreddit: data.subreddit
-        };
-      } catch (error) {
-        clearTimeout(timeoutId);
-        logger.warn('Failed to fetch meme, will retry if attempts remain', {
-          attempt,
-          error: error instanceof Error ? error.message : String(error)
-        });
       }
     }
 
-    logger.warn('Giving up on fetching a meme after all attempts');
     return null;
   }
 
-  /**
-   * Clear all tracked state (useful for testing)
-   */
+  private async fetchFromEndpoint(endpoint: string): Promise<Meme | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), MEME_FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(endpoint, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`Meme API error: ${response.status}`);
+      }
+
+      const data = (await response.json()) as MemeApiResponse;
+      if (!data.url || !data.title || data.nsfw || data.spoiler) {
+        return null;
+      }
+
+      return {
+        title: data.title,
+        imageUrl: data.url,
+        postLink: data.postLink,
+        subreddit: data.subreddit
+      };
+    } catch (error) {
+      logger.warn('Failed to fetch meme', {
+        endpoint,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  private getCandidateSubreddits(conversationText: string): string[] {
+    const text = conversationText.toLowerCase();
+    const candidates: string[] = [];
+
+    const topicMap: Array<{ subreddit: string; words: string[] }> = [
+      { subreddit: 'catmemes', words: ['cat', 'kitty', 'kitten', 'meow'] },
+      { subreddit: 'dogmemes', words: ['dog', 'puppy', 'pup', 'woof'] },
+      { subreddit: 'animemes', words: ['anime', 'manga', 'waifu', 'otaku'] },
+      { subreddit: 'ProgrammerHumor', words: ['code', 'coding', 'program', 'programming', 'developer', 'bug', 'javascript', 'typescript', 'python'] },
+      { subreddit: 'gamingmemes', words: ['game', 'gaming', 'gamer', 'minecraft', 'valorant', 'fortnite', 'steam', 'xbox', 'playstation'] },
+      { subreddit: 'wholesomememes', words: ['hug', 'cute', 'wholesome', 'happy', 'love', 'friend'] },
+      { subreddit: 'schoolmemes', words: ['school', 'homework', 'exam', 'class', 'teacher', 'college'] },
+      { subreddit: 'workmemes', words: ['work', 'job', 'boss', 'office', 'shift'] }
+    ];
+
+    for (const topic of topicMap) {
+      if (topic.words.some(word => this.containsWord(text, word))) {
+        candidates.push(topic.subreddit);
+      }
+    }
+
+    candidates.push('memes');
+    candidates.push('dankmemes');
+
+    return [...new Set(candidates)];
+  }
+
+  private containsWord(text: string, word: string): boolean {
+    return new RegExp(`\\b${word}\\b`, 'i').test(text);
+  }
+
   clearAll(): void {
     this.state.clear();
   }

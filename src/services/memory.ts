@@ -121,7 +121,11 @@ export class MemoryService {
           }
         }
 
-        return this.mapDbProfileToInterface(existingProfile);
+        return this.mapDbProfileToInterface({
+          ...existingProfile,
+          username: username ?? existingProfile.username,
+          display_name: displayName ?? existingProfile.display_name
+        });
       }
 
       // Create new profile
@@ -208,6 +212,92 @@ export class MemoryService {
         error: error instanceof Error ? error.message : String(error)
       });
       // Non-critical error, don't throw
+    }
+  }
+
+  /**
+   * Store an explicit preferred identity/name statement.
+   * Identity is personal to this Discord user and is available even when
+   * the user is not in the optional Extra memory pool.
+   */
+  async rememberIdentity(userId: string, guildId: string, name: string): Promise<void> {
+    const cleanName = name.trim().replace(/\s+/g, ' ');
+    if (!cleanName) return;
+
+    try {
+      const pool = getPool();
+      const normalized = cleanName.toLowerCase();
+
+      const { rows } = await pool.query<UserMemoryRow>(
+        `SELECT * FROM user_memories
+         WHERE user_id = $1 AND guild_id = $2 AND memory_type = 'identity' AND is_active = true
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [userId, guildId]
+      );
+
+      if (rows.length > 0) {
+        await pool.query(
+          `UPDATE user_memories
+           SET memory_content = $1,
+               normalized_content = $2,
+               confidence = 1.0,
+               frequency = frequency + 1,
+               confirmation_count = confirmation_count + 1,
+               last_accessed_at = NOW(),
+               updated_at = NOW()
+           WHERE id = $3`,
+          [`User's name is ${cleanName}`, normalized, rows[0].id]
+        );
+      } else {
+        await this.addMemory({
+          userId,
+          guildId,
+          content: `User's name is ${cleanName}`,
+          normalizedContent: normalized,
+          confidence: 1.0,
+          frequency: 1,
+          confirmationCount: 1,
+          type: 'identity',
+          source: 'explicit_user_statement',
+          firstObservedAt: new Date(),
+          isActive: true
+        });
+      }
+
+      logger.info('Stored explicit user identity', { userId, guildId });
+    } catch (error) {
+      logger.warn('Failed to store explicit user identity', {
+        userId,
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Retrieve identity memories for this user regardless of the optional
+   * role-based memory pool.
+   */
+  async getIdentityMemories(userId: string, guildId: string): Promise<Memory[]> {
+    try {
+      const pool = getPool();
+      const { rows } = await pool.query<UserMemoryRow>(
+        `SELECT * FROM user_memories
+         WHERE user_id = $1 AND guild_id = $2 AND memory_type = 'identity' AND is_active = true
+         ORDER BY confidence DESC, updated_at DESC
+         LIMIT 5`,
+        [userId, guildId]
+      );
+
+      return rows.map(row => this.mapDbMemoryToInterface(row));
+    } catch (error) {
+      logger.warn('Failed to retrieve identity memories', {
+        userId,
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return [];
     }
   }
 
@@ -445,7 +535,8 @@ export class MemoryService {
       const pool = getPool();
       const { rows } = await pool.query<UserMemoryRow>(
         `SELECT * FROM user_memories
-         WHERE user_id = $1 AND guild_id = $2 AND is_active = true AND confidence >= $3
+         WHERE user_id = $1 AND guild_id = $2 AND is_active = true
+           AND memory_type <> 'identity' AND confidence >= $3
          ORDER BY confidence DESC, confirmation_count DESC
          LIMIT $4`,
         [userId, guildId, MEMORY_CONFIDENCE_THRESHOLD, MEMORY_RETRIEVAL_LIMIT]
