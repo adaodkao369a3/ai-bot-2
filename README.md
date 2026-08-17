@@ -1,13 +1,13 @@
 # Bot Kun v2
 
-Bot Kun v2 is a TypeScript-based Discord bot with Supabase integration, rebuilt from scratch with a clean architecture.
+Bot Kun v2 is a TypeScript-based Discord bot backed by Supabase-hosted PostgreSQL, rebuilt from scratch with a clean architecture.
 
 ## Phase 1 Status
 
 Phase 1 establishes the foundation with:
 - ✅ TypeScript project with strict configuration (Node16 module resolution)
 - ✅ Discord.js client with appropriate intents
-- ✅ Supabase database connection
+- ✅ Direct PostgreSQL connection (via `pg`) to Supabase-hosted Postgres
 - ✅ Environment variable validation
 - ✅ Centralized configuration management
 - ✅ Structured logging (Railway-compatible)
@@ -20,7 +20,7 @@ Phase 1 establishes the foundation with:
 - Node.js >= 22.0.0
 - npm or yarn
 - Discord bot token
-- Supabase project URL
+- Supabase PostgreSQL connection string (pooler URL)
 - Required API keys (Groq, Klipy, YouTube)
 
 ## Local Setup
@@ -41,8 +41,7 @@ Phase 1 establishes the foundation with:
    DISCORD_TOKEN=your_discord_bot_token
    GROQ_API_KEY=your_groq_api_key
    KLIPY_KEY=your_klipy_key
-   SUPABASE_URL=your_supabase_project_url
-   SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+   SUPABASE_DATABASE_URL=your_supabase_postgres_connection_string
    YOUTUBE_API_KEY=your_youtube_api_key
    ```
 
@@ -69,8 +68,7 @@ Phase 1 establishes the foundation with:
    - `DISCORD_TOKEN`
    - `GROQ_API_KEY`
    - `KLIPY_KEY`
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `SUPABASE_DATABASE_URL`
    - `YOUTUBE_API_KEY`
 
 3. **Configure build settings:**
@@ -90,7 +88,7 @@ bot_kun_2/
 │   ├── discord/
 │   │   └── client.ts         # Discord client setup
 │   ├── database/
-│   │   └── supabase.ts       # Supabase connection
+│   │   └── pool.ts           # PostgreSQL connection pool (Supabase-hosted)
 │   ├── services/
 │   │   └── health.ts         # Health/readiness tracking
 │   ├── commands/             # Discord commands (Phase 2+)

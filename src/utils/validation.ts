@@ -17,7 +17,7 @@ export function validateProjectStructure(): boolean {
     'src/index.ts',
     'src/config/index.ts',
     'src/discord/client.ts',
-    'src/database/supabase.ts',
+    'src/database/pool.ts',
     'src/services/health.ts',
     'src/utils/env.ts',
     'src/utils/logger.ts',
@@ -61,8 +61,7 @@ export function validateEnvironmentSchema(): boolean {
   const requiredVars = [
     'DISCORD_TOKEN',
     'GROQ_API_KEY',
-    'SUPABASE_URL',
-    'SUPABASE_SERVICE_ROLE_KEY'
+    'SUPABASE_DATABASE_URL'
   ];
 
   const optionalVars = [
@@ -112,7 +111,7 @@ export function validateBuildOutput(): boolean {
     'dist/index.js',
     'dist/config/index.js',
     'dist/discord/client.js',
-    'dist/database/supabase.js',
+    'dist/database/pool.js',
     'dist/services/health.js',
     'dist/utils/env.js',
     'dist/utils/logger.js',

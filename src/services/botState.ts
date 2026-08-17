@@ -1,17 +1,22 @@
 /**
  * Bot state management for Bot Kun v2
- * Handles global enabled/disabled state with Supabase persistence
+ * Handles global enabled/disabled state with PostgreSQL persistence
  */
 
-import { getSupabaseClient } from '../database/supabase';
+import { getPool } from '../database/pool';
 import { logger } from '../utils/logger';
+
+interface GuildSettingRow {
+  guild_id: string;
+  bot_enabled: boolean;
+}
 
 export class BotStateService {
   private cache: Map<string, boolean> = new Map();
   private cacheInitialized = false;
 
   /**
-   * Initialize the cache by loading all guild states from Supabase
+   * Initialize the cache by loading all guild states from the database
    */
   async initialize(): Promise<void> {
     if (this.cacheInitialized) {
@@ -20,20 +25,14 @@ export class BotStateService {
     }
 
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('guild_settings')
-        .select('guild_id, bot_enabled');
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      const { rows } = await pool.query<GuildSettingRow>(
+        `SELECT guild_id, bot_enabled FROM guild_settings`
+      );
 
       // Populate cache with database state
-      if (data) {
-        for (const setting of data) {
-          this.cache.set(setting.guild_id, setting.bot_enabled);
-        }
+      for (const setting of rows) {
+        this.cache.set(setting.guild_id, setting.bot_enabled);
       }
 
       this.cacheInitialized = true;
@@ -58,24 +57,20 @@ export class BotStateService {
 
     // If not in cache, fetch from database
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('guild_settings')
-        .select('bot_enabled')
-        .eq('guild_id', guildId)
-        .single();
+      const pool = getPool();
+      const { rows } = await pool.query<GuildSettingRow>(
+        `SELECT bot_enabled FROM guild_settings WHERE guild_id = $1 LIMIT 1`,
+        [guildId]
+      );
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // No record found, default to enabled
-          logger.debug(`No bot state found for guild ${guildId}, defaulting to enabled`);
-          this.cache.set(guildId, true);
-          return true;
-        }
-        throw error;
+      if (rows.length === 0) {
+        // No record found, default to enabled
+        logger.debug(`No bot state found for guild ${guildId}, defaulting to enabled`);
+        this.cache.set(guildId, true);
+        return true;
       }
 
-      const enabled = data?.bot_enabled ?? true;
+      const enabled = rows[0].bot_enabled ?? true;
       this.cache.set(guildId, enabled);
       return enabled;
     } catch (error) {
@@ -93,19 +88,14 @@ export class BotStateService {
    */
   async setEnabled(guildId: string, enabled: boolean): Promise<void> {
     try {
-      const supabase = getSupabaseClient();
-      const { error } = await supabase
-        .from('guild_settings')
-        .upsert({
-          guild_id: guildId,
-          bot_enabled: enabled
-        }, {
-          onConflict: 'guild_id'
-        });
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      await pool.query(
+        `INSERT INTO guild_settings (guild_id, bot_enabled)
+         VALUES ($1, $2)
+         ON CONFLICT (guild_id)
+         DO UPDATE SET bot_enabled = EXCLUDED.bot_enabled, updated_at = NOW()`,
+        [guildId, enabled]
+      );
 
       // Update cache
       this.cache.set(guildId, enabled);

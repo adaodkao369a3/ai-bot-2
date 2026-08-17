@@ -7,7 +7,7 @@ import { BOT_NAME } from './config';
 import { env } from './utils/env';
 import { logger } from './utils/logger';
 import { createDiscordClient, connectDiscord, disconnectDiscord } from './discord/client';
-import { createSupabaseClient, testSupabaseConnection, disconnectSupabase } from './database/supabase';
+import { createPool, testConnection, disconnectPool } from './database/pool';
 import { healthTracker } from './services/health';
 import { shutdownManager } from './utils/shutdown';
 import { botStateService } from './services/botState';
@@ -33,23 +33,29 @@ async function main(): Promise<void> {
       if (discordClient) {
         await disconnectDiscord(discordClient);
       }
-      await disconnectSupabase();
+      await disconnectPool();
       
       // Shutdown services with cleanup tasks
       rateLimitService.shutdown();
       conversationContextService.shutdown();
     });
 
-    // Step 4: Initialize Supabase connection
-    const supabaseClient = createSupabaseClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
-    const supabaseConnected = await testSupabaseConnection(supabaseClient);
-    healthTracker.setSupabaseReady(supabaseConnected);
+    // Step 4: Initialize PostgreSQL connection pool (Supabase-hosted Postgres)
+    const pool = createPool(env.SUPABASE_DATABASE_URL);
+    const dbConnected = await testConnection(pool);
+    healthTracker.setSupabaseReady(dbConnected);
 
-    if (!supabaseConnected) {
-      throw new Error('Failed to establish Supabase connection');
+    if (!dbConnected) {
+      // Fail loudly and refuse to continue: a Discord client that comes online
+      // while persistence is broken would silently pretend to work while
+      // memory, blacklist, and bot-state features fail underneath it.
+      throw new Error(
+        'Failed to establish PostgreSQL connection using SUPABASE_DATABASE_URL. ' +
+        'Refusing to start Discord client with broken persistence.'
+      );
     }
 
-    // Step 5: Initialize services with Supabase data
+    // Step 5: Initialize services with database-backed data
     logger.info('Initializing Bot Kun services...');
     await botStateService.initialize();
     await blacklistService.initialize();

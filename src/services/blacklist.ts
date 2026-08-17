@@ -1,17 +1,22 @@
 /**
  * Blacklist service for Bot Kun v2
- * Manages user blacklisting with Supabase persistence
+ * Manages user blacklisting with PostgreSQL persistence
  */
 
-import { getSupabaseClient } from '../database/supabase';
+import { getPool } from '../database/pool';
 import { logger } from '../utils/logger';
+
+interface BlacklistRow {
+  user_id: string;
+  guild_id: string;
+}
 
 export class BlacklistService {
   private cache: Map<string, Set<string>> = new Map(); // guildId -> Set of userIds
   private cacheInitialized = false;
 
   /**
-   * Initialize the cache by loading all blacklists from Supabase
+   * Initialize the cache by loading all blacklists from the database
    */
   async initialize(): Promise<void> {
     if (this.cacheInitialized) {
@@ -20,27 +25,21 @@ export class BlacklistService {
     }
 
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('blacklist')
-        .select('user_id, guild_id');
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      const { rows } = await pool.query<BlacklistRow>(
+        `SELECT user_id, guild_id FROM blacklist`
+      );
 
       // Populate cache with database state
-      if (data) {
-        for (const entry of data) {
-          if (!this.cache.has(entry.guild_id)) {
-            this.cache.set(entry.guild_id, new Set());
-          }
-          this.cache.get(entry.guild_id)!.add(entry.user_id);
+      for (const entry of rows) {
+        if (!this.cache.has(entry.guild_id)) {
+          this.cache.set(entry.guild_id, new Set());
         }
+        this.cache.get(entry.guild_id)!.add(entry.user_id);
       }
 
       this.cacheInitialized = true;
-      logger.info(`Blacklist cache initialized with ${data?.length || 0} entries`);
+      logger.info(`Blacklist cache initialized with ${rows.length} entries`);
     } catch (error) {
       logger.error('Failed to initialize blacklist cache', {
         error: error instanceof Error ? error.message : String(error)
@@ -61,24 +60,14 @@ export class BlacklistService {
 
     // If not in cache, fetch from database
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('blacklist')
-        .select('user_id')
-        .eq('user_id', userId)
-        .eq('guild_id', guildId)
-        .single();
+      const pool = getPool();
+      const { rows } = await pool.query<BlacklistRow>(
+        `SELECT user_id FROM blacklist WHERE user_id = $1 AND guild_id = $2 LIMIT 1`,
+        [userId, guildId]
+      );
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // No record found, not blacklisted
-          return false;
-        }
-        throw error;
-      }
+      const isBlacklisted = rows.length > 0;
 
-      const isBlacklisted = !!data;
-      
       // Update cache
       if (isBlacklisted) {
         if (!this.cache.has(guildId)) {
@@ -110,19 +99,12 @@ export class BlacklistService {
     reason?: string
   ): Promise<void> {
     try {
-      const supabase = getSupabaseClient();
-      const { error } = await supabase
-        .from('blacklist')
-        .insert({
-          user_id: userId,
-          guild_id: guildId,
-          blacklisted_by: blacklistedBy,
-          reason: reason || null
-        });
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      await pool.query(
+        `INSERT INTO blacklist (user_id, guild_id, blacklisted_by, reason)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, guildId, blacklistedBy, reason ?? null]
+      );
 
       // Update cache
       if (!this.cache.has(guildId)) {
@@ -148,16 +130,11 @@ export class BlacklistService {
    */
   async removeFromBlacklist(userId: string, guildId: string): Promise<void> {
     try {
-      const supabase = getSupabaseClient();
-      const { error } = await supabase
-        .from('blacklist')
-        .delete()
-        .eq('user_id', userId)
-        .eq('guild_id', guildId);
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      await pool.query(
+        `DELETE FROM blacklist WHERE user_id = $1 AND guild_id = $2`,
+        [userId, guildId]
+      );
 
       // Update cache
       const guildBlacklist = this.cache.get(guildId);

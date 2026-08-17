@@ -6,6 +6,9 @@ NPM_CONFIG_PRODUCTION = "false"
 
 [deploy]
 startCommand = "npm start"
-healthcheckPath = "/"
-healthcheckTimeout = 300
+# This is a Discord worker process with no HTTP listener, so Railway's
+# HTTP healthcheckPath doesn't apply here - it would fail/hang forever
+# waiting for a response from a server that doesn't exist. Railway falls
+# back to watching the process itself (restarting on non-zero exit).
 restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

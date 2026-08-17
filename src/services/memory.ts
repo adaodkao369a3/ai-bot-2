@@ -1,9 +1,9 @@
 /**
  * Memory service for Bot Kun v2
- * Handles user profiles and long-term memory operations with Supabase
+ * Handles user profiles and long-term memory operations against PostgreSQL
  */
 
-import { getSupabaseClient } from '../database/supabase';
+import { getPool } from '../database/pool';
 import { 
   MEMORY_ACTIVE_MEMBER_CAP, 
   MEMORY_CONFIDENCE_THRESHOLD, 
@@ -45,6 +45,40 @@ export interface Memory {
   isActive?: boolean;
 }
 
+interface UserProfileRow {
+  id: string;
+  user_id: string;
+  guild_id: string;
+  username: string | null;
+  display_name: string | null;
+  memory_eligible: boolean;
+  extra_role_id: string | null;
+  is_extra: boolean;
+  is_featured_extra: boolean;
+  is_supporting_cast: boolean;
+  last_interaction_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface UserMemoryRow {
+  id: string;
+  user_id: string;
+  guild_id: string;
+  memory_content: string;
+  normalized_content: string | null;
+  confidence: string | number;
+  frequency: number;
+  confirmation_count: number;
+  memory_type: string | null;
+  source: string;
+  last_accessed_at: string | null;
+  first_observed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  is_active: boolean;
+}
+
 export class MemoryService {
   /**
    * Get or create user profile
@@ -56,35 +90,34 @@ export class MemoryService {
     displayName?: string
   ): Promise<UserProfile> {
     try {
-      const supabase = getSupabaseClient();
-      
-      // Try to get existing profile
-      const { data: existingProfile, error: fetchError } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('guild_id', guildId)
-        .single();
+      const pool = getPool();
 
-      if (fetchError && fetchError.code !== 'PGRST116') {
-        throw fetchError;
-      }
+      // Try to get existing profile
+      const { rows: existingRows } = await pool.query<UserProfileRow>(
+        `SELECT * FROM user_profiles WHERE user_id = $1 AND guild_id = $2 LIMIT 1`,
+        [userId, guildId]
+      );
+      const existingProfile = existingRows[0];
 
       if (existingProfile) {
         // Update profile if user info changed
         if (username || displayName) {
-          const { error: updateError } = await supabase
-            .from('user_profiles')
-            .update({
-              username: username || existingProfile.username,
-              display_name: displayName || existingProfile.display_name,
-              updated_at: new Date().toISOString()
-            })
-            .eq('user_id', userId)
-            .eq('guild_id', guildId);
-
-          if (updateError) {
-            logger.warn('Failed to update user profile', { error: updateError.message });
+          try {
+            await pool.query(
+              `UPDATE user_profiles
+               SET username = $1, display_name = $2, updated_at = NOW()
+               WHERE user_id = $3 AND guild_id = $4`,
+              [
+                username || existingProfile.username,
+                displayName || existingProfile.display_name,
+                userId,
+                guildId
+              ]
+            );
+          } catch (updateError) {
+            logger.warn('Failed to update user profile', {
+              error: updateError instanceof Error ? updateError.message : String(updateError)
+            });
           }
         }
 
@@ -92,27 +125,16 @@ export class MemoryService {
       }
 
       // Create new profile
-      const { data: newProfile, error: createError } = await supabase
-        .from('user_profiles')
-        .insert({
-          user_id: userId,
-          guild_id: guildId,
-          username: username || null,
-          display_name: displayName || null,
-          memory_eligible: false,
-          is_extra: false,
-          is_featured_extra: false,
-          is_supporting_cast: false
-        })
-        .select()
-        .single();
-
-      if (createError) {
-        throw createError;
-      }
+      const { rows: newRows } = await pool.query<UserProfileRow>(
+        `INSERT INTO user_profiles
+           (user_id, guild_id, username, display_name, memory_eligible, is_extra, is_featured_extra, is_supporting_cast)
+         VALUES ($1, $2, $3, $4, false, false, false, false)
+         RETURNING *`,
+        [userId, guildId, username || null, displayName || null]
+      );
 
       logger.debug(`Created new profile for user ${userId} in guild ${guildId}`);
-      return this.mapDbProfileToInterface(newProfile);
+      return this.mapDbProfileToInterface(newRows[0]);
     } catch (error) {
       logger.error('Failed to get or create user profile', {
         userId,
@@ -137,25 +159,24 @@ export class MemoryService {
       const isFeaturedExtra = permissionService.isFeaturedExtra(member);
       const isSupportingCast = permissionService.isSupportingCast(member);
 
-      const supabase = getSupabaseClient();
-      const { error } = await supabase
-        .from('user_profiles')
-        .update({
-          memory_eligible: isEligible,
-          is_extra: isExtra,
-          is_featured_extra: isFeaturedExtra,
-          is_supporting_cast: isSupportingCast,
-          extra_role_id: isEligible ? member.roles.cache.find((_r: any) => 
+      const extraRoleId = isEligible
+        ? member.roles.cache.find((_r: any) =>
             [isExtra, isFeaturedExtra, isSupportingCast].includes(true)
-          )?.id : null,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .eq('guild_id', guildId);
+          )?.id ?? null
+        : null;
 
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      await pool.query(
+        `UPDATE user_profiles
+         SET memory_eligible = $1,
+             is_extra = $2,
+             is_featured_extra = $3,
+             is_supporting_cast = $4,
+             extra_role_id = $5,
+             updated_at = NOW()
+         WHERE user_id = $6 AND guild_id = $7`,
+        [isEligible, isExtra, isFeaturedExtra, isSupportingCast, extraRoleId, userId, guildId]
+      );
 
       logger.debug(`Updated memory eligibility for user ${userId}: ${isEligible}`);
     } catch (error) {
@@ -173,19 +194,13 @@ export class MemoryService {
    */
   async updateLastInteraction(userId: string, guildId: string): Promise<void> {
     try {
-      const supabase = getSupabaseClient();
-      const { error } = await supabase
-        .from('user_profiles')
-        .update({
-          last_interaction_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .eq('guild_id', guildId);
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      await pool.query(
+        `UPDATE user_profiles
+         SET last_interaction_at = NOW(), updated_at = NOW()
+         WHERE user_id = $1 AND guild_id = $2`,
+        [userId, guildId]
+      );
     } catch (error) {
       logger.error('Failed to update last interaction', {
         userId,
@@ -201,40 +216,34 @@ export class MemoryService {
    */
   async isInActiveMemoryPool(userId: string, guildId: string): Promise<boolean> {
     try {
-      const supabase = getSupabaseClient();
-      
-      // Count eligible users with recent interactions
-      const { count, error } = await supabase
-        .from('user_profiles')
-        .select('*', { count: 'exact', head: true })
-        .eq('guild_id', guildId)
-        .eq('memory_eligible', true)
-        .gt('last_interaction_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()); // 30 days
+      const pool = getPool();
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
 
-      if (error) {
-        throw error;
-      }
+      // Count eligible users with recent interactions
+      const { rows: countRows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count
+         FROM user_profiles
+         WHERE guild_id = $1 AND memory_eligible = true AND last_interaction_at > $2`,
+        [guildId, cutoff]
+      );
+      const count = parseInt(countRows[0]?.count ?? '0', 10);
 
       // If under cap, user is automatically in pool
-      if (!count || count < MEMORY_ACTIVE_MEMBER_CAP) {
+      if (count < MEMORY_ACTIVE_MEMBER_CAP) {
         return true;
       }
 
       // Check if user is in top N by last interaction
-      const { data: topUsers, error: rankError } = await supabase
-        .from('user_profiles')
-        .select('user_id')
-        .eq('guild_id', guildId)
-        .eq('memory_eligible', true)
-        .gt('last_interaction_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-        .order('last_interaction_at', { ascending: false })
-        .limit(MEMORY_ACTIVE_MEMBER_CAP);
+      const { rows: topUsers } = await pool.query<{ user_id: string }>(
+        `SELECT user_id
+         FROM user_profiles
+         WHERE guild_id = $1 AND memory_eligible = true AND last_interaction_at > $2
+         ORDER BY last_interaction_at DESC
+         LIMIT $3`,
+        [guildId, cutoff, MEMORY_ACTIVE_MEMBER_CAP]
+      );
 
-      if (rankError) {
-        throw rankError;
-      }
-
-      return topUsers?.some(u => u.user_id === userId) ?? false;
+      return topUsers.some(u => u.user_id === userId);
     } catch (error) {
       logger.error('Failed to check active memory pool', {
         userId,
@@ -250,32 +259,30 @@ export class MemoryService {
    */
   async addMemory(memory: Omit<Memory, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('user_memories')
-        .insert({
-          user_id: memory.userId,
-          guild_id: memory.guildId,
-          memory_content: memory.content,
-          normalized_content: memory.normalizedContent,
-          confidence: memory.confidence,
-          frequency: memory.frequency,
-          confirmation_count: memory.confirmationCount,
-          memory_type: memory.type,
-          source: memory.source,
-          last_accessed_at: new Date().toISOString(),
-          first_observed_at: memory.firstObservedAt || new Date().toISOString(),
-          is_active: memory.isActive !== undefined ? memory.isActive : true
-        })
-        .select('id')
-        .single();
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO user_memories
+           (user_id, guild_id, memory_content, normalized_content, confidence, frequency,
+            confirmation_count, memory_type, source, last_accessed_at, first_observed_at, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11)
+         RETURNING id`,
+        [
+          memory.userId,
+          memory.guildId,
+          memory.content,
+          memory.normalizedContent ?? null,
+          memory.confidence,
+          memory.frequency,
+          memory.confirmationCount,
+          memory.type,
+          memory.source,
+          memory.firstObservedAt ? memory.firstObservedAt.toISOString() : new Date().toISOString(),
+          memory.isActive !== undefined ? memory.isActive : true
+        ]
+      );
 
       logger.debug(`Added memory for user ${memory.userId}: ${memory.content.substring(0, 50)}...`);
-      return data.id;
+      return rows[0].id;
     } catch (error) {
       logger.error('Failed to add memory', {
         userId: memory.userId,
@@ -290,26 +297,20 @@ export class MemoryService {
    */
   async findSimilarMemories(userId: string, guildId: string, candidate: MemoryCandidate): Promise<Memory[]> {
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('user_memories')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('guild_id', guildId)
-        .eq('memory_type', candidate.type)
-        .eq('is_active', true)
-        .limit(20); // Check recent memories for similarity
+      const pool = getPool();
+      const { rows } = await pool.query<UserMemoryRow>(
+        `SELECT * FROM user_memories
+         WHERE user_id = $1 AND guild_id = $2 AND memory_type = $3 AND is_active = true
+         LIMIT 20`,
+        [userId, guildId, candidate.type]
+      );
 
-      if (error) {
-        throw error;
-      }
-
-      if (!data || data.length === 0) {
+      if (rows.length === 0) {
         return [];
       }
 
       // Calculate similarity and filter
-      const similar = data
+      const similar = rows
         .map(db => this.mapDbMemoryToInterface(db))
         .filter(memory => this.calculateSimilarity(candidate.normalizedContent, memory.normalizedContent || '') >= 0.6);
 
@@ -329,40 +330,40 @@ export class MemoryService {
    */
   async updateMemoryConfirmation(memoryId: string): Promise<void> {
     try {
-      const supabase = getSupabaseClient();
-      
-      // Get current memory
-      const { data: current, error: fetchError } = await supabase
-        .from('user_memories')
-        .select('*')
-        .eq('id', memoryId)
-        .single();
+      const pool = getPool();
 
-      if (fetchError) {
-        throw fetchError;
+      // Get current memory
+      const { rows: currentRows } = await pool.query<UserMemoryRow>(
+        `SELECT * FROM user_memories WHERE id = $1 LIMIT 1`,
+        [memoryId]
+      );
+
+      if (currentRows.length === 0) {
+        throw new Error(`Memory ${memoryId} not found`);
       }
+
+      const current = currentRows[0];
+      const currentConfidence = typeof current.confidence === 'string'
+        ? parseFloat(current.confidence)
+        : current.confidence;
 
       // Calculate new confidence (capped at max)
       const newConfidence = Math.min(
         MEMORY_MAX_CONFIDENCE,
-        current.confidence + MEMORY_CONFIDENCE_INCREMENT
+        currentConfidence + MEMORY_CONFIDENCE_INCREMENT
       );
 
       // Update memory
-      const { error: updateError } = await supabase
-        .from('user_memories')
-        .update({
-          confidence: newConfidence,
-          frequency: current.frequency + 1,
-          confirmation_count: current.confirmation_count + 1,
-          last_accessed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', memoryId);
-
-      if (updateError) {
-        throw updateError;
-      }
+      await pool.query(
+        `UPDATE user_memories
+         SET confidence = $1,
+             frequency = $2,
+             confirmation_count = $3,
+             last_accessed_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $4`,
+        [newConfidence, current.frequency + 1, current.confirmation_count + 1, memoryId]
+      );
 
       logger.debug(`Updated memory confirmation: ${memoryId}, new confidence: ${newConfidence}`);
     } catch (error) {
@@ -441,32 +442,25 @@ export class MemoryService {
    */
   async getRelevantMemories(userId: string, guildId: string): Promise<Memory[]> {
     try {
-      const supabase = getSupabaseClient();
-      const { data, error } = await supabase
-        .from('user_memories')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('guild_id', guildId)
-        .eq('is_active', true)
-        .gte('confidence', MEMORY_CONFIDENCE_THRESHOLD)
-        .order('confidence', { ascending: false })
-        .order('confirmation_count', { ascending: false })
-        .limit(MEMORY_RETRIEVAL_LIMIT);
-
-      if (error) {
-        throw error;
-      }
+      const pool = getPool();
+      const { rows } = await pool.query<UserMemoryRow>(
+        `SELECT * FROM user_memories
+         WHERE user_id = $1 AND guild_id = $2 AND is_active = true AND confidence >= $3
+         ORDER BY confidence DESC, confirmation_count DESC
+         LIMIT $4`,
+        [userId, guildId, MEMORY_CONFIDENCE_THRESHOLD, MEMORY_RETRIEVAL_LIMIT]
+      );
 
       // Update last accessed time for retrieved memories
-      if (data && data.length > 0) {
-        const memoryIds = data.map(m => m.id);
-        await supabase
-          .from('user_memories')
-          .update({ last_accessed_at: new Date().toISOString() })
-          .in('id', memoryIds);
+      if (rows.length > 0) {
+        const memoryIds = rows.map(m => m.id);
+        await pool.query(
+          `UPDATE user_memories SET last_accessed_at = NOW() WHERE id = ANY($1::uuid[])`,
+          [memoryIds]
+        );
       }
 
-      return data?.map(this.mapDbMemoryToInterface) ?? [];
+      return rows.map(row => this.mapDbMemoryToInterface(row));
     } catch (error) {
       logger.error('Failed to retrieve memories', {
         userId,
@@ -491,9 +485,9 @@ export class MemoryService {
   }
 
   /**
-   * Map database profile to interface
+   * Map database profile row to interface
    */
-  private mapDbProfileToInterface(db: any): UserProfile {
+  private mapDbProfileToInterface(db: UserProfileRow): UserProfile {
     return {
       userId: db.user_id,
       guildId: db.guild_id,
@@ -508,19 +502,20 @@ export class MemoryService {
   }
 
   /**
-   * Map database memory to interface
+   * Map database memory row to interface
    */
-  private mapDbMemoryToInterface(db: any): Memory {
+  private mapDbMemoryToInterface(db: UserMemoryRow): Memory {
+    const confidence = typeof db.confidence === 'string' ? parseFloat(db.confidence) : db.confidence;
     return {
       id: db.id,
       userId: db.user_id,
       guildId: db.guild_id,
       content: db.memory_content,
-      normalizedContent: db.normalized_content,
-      confidence: db.confidence,
+      normalizedContent: db.normalized_content ?? undefined,
+      confidence,
       frequency: db.frequency,
       confirmationCount: db.confirmation_count || 1,
-      type: db.memory_type || 'other',
+      type: (db.memory_type as MemoryType) || 'other',
       source: db.source,
       lastAccessedAt: db.last_accessed_at ? new Date(db.last_accessed_at) : undefined,
       firstObservedAt: db.first_observed_at ? new Date(db.first_observed_at) : undefined,

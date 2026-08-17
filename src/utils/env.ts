@@ -11,8 +11,7 @@ dotenv.config();
 interface EnvConfig {
   DISCORD_TOKEN: string;
   GROQ_API_KEY: string;
-  SUPABASE_URL: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_DATABASE_URL: string;
   KLIPY_KEY?: string;
   YOUTUBE_API_KEY?: string;
 }
@@ -20,8 +19,7 @@ interface EnvConfig {
 const requiredEnvVars: (keyof EnvConfig)[] = [
   'DISCORD_TOKEN',
   'GROQ_API_KEY',
-  'SUPABASE_URL',
-  'SUPABASE_SERVICE_ROLE_KEY'
+  'SUPABASE_DATABASE_URL'
 ];
 
 export function validateEnv(): EnvConfig {
@@ -43,8 +41,7 @@ export function validateEnv(): EnvConfig {
   return {
     DISCORD_TOKEN: process.env.DISCORD_TOKEN!,
     GROQ_API_KEY: process.env.GROQ_API_KEY!,
-    SUPABASE_URL: process.env.SUPABASE_URL!,
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    SUPABASE_DATABASE_URL: process.env.SUPABASE_DATABASE_URL!,
     KLIPY_KEY: process.env.KLIPY_KEY,
     YOUTUBE_API_KEY: process.env.YOUTUBE_API_KEY
   };
