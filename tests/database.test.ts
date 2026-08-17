@@ -15,6 +15,7 @@ jest.mock('pg', () => {
   return { Pool: jest.fn(() => mPool) };
 });
 
+import fs from 'fs';
 import {
   createPool,
   getPool,
@@ -24,9 +25,17 @@ import {
 } from '../src/database/pool';
 
 describe('Database pool (pg)', () => {
+  const ORIGINAL_ENV = { ...process.env };
+
   beforeEach(() => {
     jest.clearAllMocks();
     __resetPoolForTests();
+    delete process.env.SUPABASE_DB_CA_CERT;
+    delete process.env.SUPABASE_DB_CA_CERT_PATH;
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
   });
 
   describe('createPool', () => {
@@ -40,12 +49,65 @@ describe('Database pool (pg)', () => {
       );
     });
 
-    it('enables certificate verification rather than disabling TLS validation', () => {
+    it('falls back to rejectUnauthorized: false when no CA certificate is configured', () => {
       createPool('postgresql://user:pass@host:5432/postgres');
 
       const config = (Pool as unknown as jest.Mock).mock.calls[0][0];
       expect(config.ssl).toBeDefined();
+      expect(config.ssl.rejectUnauthorized).toBe(false);
+      expect(config.ssl.ca).toBeUndefined();
+    });
+
+    it('uses full certificate verification when SUPABASE_DB_CA_CERT is set', () => {
+      process.env.SUPABASE_DB_CA_CERT = '-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----';
+
+      createPool('postgresql://user:pass@host:5432/postgres');
+
+      const config = (Pool as unknown as jest.Mock).mock.calls[0][0];
       expect(config.ssl.rejectUnauthorized).toBe(true);
+      expect(config.ssl.ca).toBe(process.env.SUPABASE_DB_CA_CERT);
+    });
+
+    it('uses full certificate verification when SUPABASE_DB_CA_CERT_PATH is set', () => {
+      jest.spyOn(fs, 'readFileSync').mockReturnValueOnce('-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----' as unknown as Buffer);
+      process.env.SUPABASE_DB_CA_CERT_PATH = '/fake/path/ca.crt';
+
+      createPool('postgresql://user:pass@host:5432/postgres');
+
+      const config = (Pool as unknown as jest.Mock).mock.calls[0][0];
+      expect(config.ssl.rejectUnauthorized).toBe(true);
+      expect(config.ssl.ca).toContain('FAKE');
+
+      (fs.readFileSync as jest.Mock).mockRestore();
+    });
+
+    it('falls back to rejectUnauthorized: false when SUPABASE_DB_CA_CERT_PATH cannot be read', () => {
+      jest.spyOn(fs, 'readFileSync').mockImplementationOnce(() => {
+        throw new Error('ENOENT: no such file or directory');
+      });
+      process.env.SUPABASE_DB_CA_CERT_PATH = '/does/not/exist.crt';
+
+      createPool('postgresql://user:pass@host:5432/postgres');
+
+      const config = (Pool as unknown as jest.Mock).mock.calls[0][0];
+      expect(config.ssl.rejectUnauthorized).toBe(false);
+
+      (fs.readFileSync as jest.Mock).mockRestore();
+    });
+
+    it('strips a conflicting sslmode query parameter so ssl config is deterministic', () => {
+      createPool('postgresql://user:pass@host:5432/postgres?sslmode=require');
+
+      const config = (Pool as unknown as jest.Mock).mock.calls[0][0];
+      expect(config.connectionString).not.toContain('sslmode');
+      expect(config.ssl.rejectUnauthorized).toBe(false);
+    });
+
+    it('leaves a connection string with no sslmode param untouched', () => {
+      createPool('postgresql://user:pass@host:5432/postgres?application_name=botkun');
+
+      const config = (Pool as unknown as jest.Mock).mock.calls[0][0];
+      expect(config.connectionString).toContain('application_name=botkun');
     });
 
     it('returns the existing pool instance if already initialized', () => {

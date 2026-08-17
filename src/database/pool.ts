@@ -8,30 +8,101 @@
  * Never logs the connection string or any credential material.
  */
 
+import fs from 'fs';
 import { Pool, PoolConfig, QueryResult, QueryResultRow } from 'pg';
 import { logger } from '../utils/logger';
 
 let pool: Pool | null = null;
 
 /**
+ * Read an optional CA certificate for verify-full style TLS validation.
+ *
+ * Either SUPABASE_DB_CA_CERT (the PEM contents directly, e.g. pasted into a
+ * Railway variable) or SUPABASE_DB_CA_CERT_PATH (a path to a mounted file)
+ * can be set. Neither is required - this is an opt-in upgrade path, never a
+ * secret in itself (CA certificates are public by design).
+ */
+function readCaCertFromEnv(): string | undefined {
+  const inline = process.env.SUPABASE_DB_CA_CERT;
+  if (inline && inline.trim().length > 0) {
+    return inline;
+  }
+
+  const path = process.env.SUPABASE_DB_CA_CERT_PATH;
+  if (path) {
+    try {
+      return fs.readFileSync(path, 'utf8');
+    } catch (error) {
+      logger.error('Failed to read SUPABASE_DB_CA_CERT_PATH, ignoring it', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Determine SSL configuration for the Supabase pooler connection.
  *
- * Supabase's hosted pooler (Supavisor/PgBouncer) presents a certificate issued
- * by a publicly trusted CA - it is NOT self-signed. That means the safe,
- * correct setting is standard certificate verification (rejectUnauthorized: true),
- * not rejectUnauthorized: false. Disabling verification would allow a
- * man-in-the-middle to intercept the connection undetected and is only ever
- * appropriate for self-hosted Supabase instances presenting a private CA -
- * which is not the deployment target here.
+ * Supabase's own edge certificate is publicly trusted, but on some proxied
+ * paths (Railway's TCP proxy in front of the Supavisor/PgBouncer pooler,
+ * observed here) Node is handed an intermediate chain it cannot validate
+ * against its default trust store, and rejects it as
+ * "self-signed certificate in certificate chain" even though the connection
+ * itself is genuinely TLS-encrypted.
  *
- * We deliberately build the ssl option as an object (rather than relying on
- * a `sslmode` query parameter in the connection string) because node-postgres
- * silently ignores the `ssl` config object whenever the connection string
- * contains an `sslmode` parameter. Keeping TLS config here, in one place,
- * avoids that foot-gun.
+ * Preferred fix: set SUPABASE_DB_CA_CERT (or _PATH) to the project's CA
+ * certificate from Supabase Dashboard -> Database -> SSL Configuration. When
+ * present, we verify the server against it (rejectUnauthorized: true), which
+ * is the "verify-full" equivalent and defeats MITM attacks.
+ *
+ * Fallback: if no CA is configured, we use rejectUnauthorized: false so the
+ * bot can actually start. The connection is still encrypted; what's lost is
+ * server-identity verification, so this only protects against passive
+ * eavesdropping, not an active MITM. This is a known, common trade-off for
+ * this exact Supabase/Railway pairing and is why the CA-cert path above is
+ * offered as the secure upgrade.
  */
 function resolveSslConfig(): PoolConfig['ssl'] {
-  return { rejectUnauthorized: true };
+  const ca = readCaCertFromEnv();
+  if (ca) {
+    logger.info('PostgreSQL SSL: CA certificate configured, using full certificate verification');
+    return { rejectUnauthorized: true, ca };
+  }
+
+  logger.warn(
+    'PostgreSQL SSL: no CA certificate configured (SUPABASE_DB_CA_CERT / SUPABASE_DB_CA_CERT_PATH). ' +
+    'Falling back to rejectUnauthorized: false so the pool can connect through the Railway/Supavisor ' +
+    'proxy chain. Traffic is still encrypted, but the server certificate is not verified. Set ' +
+    'SUPABASE_DB_CA_CERT_PATH (or SUPABASE_DB_CA_CERT) to enable full verification.'
+  );
+  return { rejectUnauthorized: false };
+}
+
+/**
+ * node-postgres silently ignores the `ssl` config object whenever the
+ * connection string itself contains an `sslmode` query parameter - the
+ * string wins and the object above is never applied. Strip it so the
+ * behavior is deterministic and always driven by resolveSslConfig().
+ */
+function stripConflictingSslParams(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    if (url.searchParams.has('sslmode')) {
+      logger.warn(
+        'SUPABASE_DATABASE_URL contains an sslmode parameter, which node-postgres would let ' +
+        'silently override the pool\'s explicit ssl config. Ignoring it in favor of the ' +
+        'explicit configuration so TLS behavior is deterministic.'
+      );
+      url.searchParams.delete('sslmode');
+    }
+    return url.toString();
+  } catch {
+    // Not a strictly parseable URL (e.g. missing encoding) - fall back to
+    // using it as-is rather than risk mangling a working connection string.
+    return connectionString;
+  }
 }
 
 export function createPool(connectionString: string): Pool {
@@ -44,7 +115,7 @@ export function createPool(connectionString: string): Pool {
     logger.info('Initializing PostgreSQL connection pool...');
 
     pool = new Pool({
-      connectionString,
+      connectionString: stripConflictingSslParams(connectionString),
       ssl: resolveSslConfig(),
       max: 10,
       idleTimeoutMillis: 30000,
