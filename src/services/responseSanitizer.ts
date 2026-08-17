@@ -17,16 +17,17 @@ export class ResponseSanitizer {
     sanitized = sanitized.replace(/@everyone/g, '@​everyone'); // Zero-width space to break mention
     sanitized = sanitized.replace(/@here/g, '@​here');
 
-    // Remove user mentions <@123456789> and <@!123456789>
-    sanitized = sanitized.replace(/<@!?(\d+)>/g, (_match, userId) => {
-      logger.warn('Detected and blocked user mention in AI response', { userId });
-      return '@user'; // Replace with generic placeholder
+    // Keep user mentions so Bot Kun can naturally refer to people in conversation.
+    // The router controls which mentions Discord is actually allowed to notify.
+    sanitized = sanitized.replace(/<@!?(\d+)>/g, (match, userId) => {
+      logger.debug('Preserving user mention in AI response', { userId });
+      return match;
     });
 
-    // Remove role mentions <@&123456789>
+    // Still block role mentions because roles can notify large groups.
     sanitized = sanitized.replace(/<@&(\d+)>/g, (_match, roleId) => {
       logger.warn('Detected and blocked role mention in AI response', { roleId });
-      return '@role'; // Replace with generic placeholder
+      return '@role';
     });
 
     return sanitized;

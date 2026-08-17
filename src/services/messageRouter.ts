@@ -233,7 +233,9 @@ export class MessageRouter {
         await message.reply({
           content: sanitizedContent,
           allowedMentions: {
-            parse: [] // Disable all mention parsing
+            parse: [],
+            repliedUser: true,
+            users: [userId]
           }
         });
         logger.info(`Bot Kun responded to user ${userId} in guild ${guildId}`);
@@ -249,7 +251,9 @@ export class MessageRouter {
         await message.reply({
           content: errorMessage,
           allowedMentions: {
-            parse: [] // Disable all mention parsing
+            parse: [],
+            repliedUser: true,
+            users: [userId]
           }
         });
         logger.error('AI response failed', {
@@ -313,7 +317,7 @@ export class MessageRouter {
       if (!meme) {
         await message.reply({
           content: 'I tried to find one that fits, but the meme API came up empty.',
-          allowedMentions: { parse: [] }
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
@@ -325,7 +329,7 @@ export class MessageRouter {
             .setImage(meme.imageUrl)
             .setColor(0xFFA500)
         ],
-        allowedMentions: { parse: [] }
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
       return true;
     }
@@ -336,7 +340,7 @@ export class MessageRouter {
       if (!gif) {
         await message.reply({
           content: `I couldn't find a ${gifAction} GIF right now.`,
-          allowedMentions: { parse: [] }
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
@@ -348,7 +352,7 @@ export class MessageRouter {
             .setImage(gif.url)
             .setColor(0x9B59B6)
         ],
-        allowedMentions: { parse: [] }
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
       return true;
     }
@@ -359,7 +363,7 @@ export class MessageRouter {
       if (!video) {
         await message.reply({
           content: 'I couldn\'t pull a YouTube video right now. Check that the YouTube API key is configured.',
-          allowedMentions: { parse: [] }
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
@@ -368,7 +372,7 @@ export class MessageRouter {
       // URL. Discord renders this as its native YouTube video player.
       await message.reply({
         content: `Here you go — ${video.title}\nhttps://www.youtube.com/watch?v=${video.videoId}`,
-        allowedMentions: { parse: [] }
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
       return true;
     }
