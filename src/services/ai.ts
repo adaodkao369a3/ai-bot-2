@@ -24,7 +24,12 @@ export interface AIResponse {
 export class AIService {
   private apiKey: string;
   private baseUrl = 'https://api.groq.com/openai/v1/chat/completions';
-  private model = 'llama3-8b-8192'; // Using Llama 3 8B model
+  // llama3-8b-8192 was decommissioned by Groq. openai/gpt-oss-20b is Groq's
+  // current production-tier replacement for that class of model (fast, low
+  // cost, good for chat) - see https://console.groq.com/docs/deprecations.
+  // Overridable via GROQ_MODEL so a future Groq deprecation doesn't require
+  // a code change/redeploy - just update the Railway variable.
+  private model = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
 
   constructor(apiKey: string) {
     this.apiKey = apiKey;
