@@ -179,6 +179,59 @@ describe('Database pool (pg)', () => {
     });
   });
 
+  describe('tenant/user not found guidance', () => {
+    it('adds actionable Supavisor guidance without leaking the connection string', async () => {
+      const secretUrl = 'postgresql://postgres.abc123ref:sup3rSecretPassword@aws-0-us-east-1.pooler.supabase.com:6543/postgres';
+      const pool = createPool(secretUrl);
+      (pool.query as jest.Mock).mockRejectedValueOnce(
+        new Error('(ENOTFOUND) tenant/user postgres.abc123ref not found')
+      );
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = await testConnection(pool);
+
+      expect(result).toBe(false);
+      const loggedOutput = consoleSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(loggedOutput).toContain('tenant/user not found');
+      expect(loggedOutput).toContain('Connection Pooling');
+      expect(loggedOutput).not.toContain('sup3rSecretPassword');
+      expect(loggedOutput).not.toContain(secretUrl);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('does not add the guidance for unrelated connection failures', async () => {
+      const pool = createPool('postgresql://user:pass@host:5432/postgres');
+      (pool.query as jest.Mock).mockRejectedValueOnce(new Error('connection refused'));
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      await testConnection(pool);
+
+      const loggedOutput = consoleSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(loggedOutput).not.toContain('Connection Pooling');
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('connection breadcrumbs', () => {
+    it('logs non-secret host/port/project-ref, never the password', () => {
+      const secretUrl = 'postgresql://postgres.abc123ref:sup3rSecretPassword@aws-0-us-east-1.pooler.supabase.com:6543/postgres';
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+      createPool(secretUrl);
+
+      const loggedOutput = consoleSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(loggedOutput).toContain('aws-0-us-east-1.pooler.supabase.com');
+      expect(loggedOutput).toContain('abc123ref');
+      expect(loggedOutput).not.toContain('sup3rSecretPassword');
+
+      consoleSpy.mockRestore();
+    });
+  });
+
   describe('secret handling', () => {
     it('never includes the connection string in a thrown/logged error message', async () => {
       const secretUrl = 'postgresql://postgres:sup3rSecretPassword@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres';

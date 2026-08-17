@@ -105,6 +105,30 @@ function stripConflictingSslParams(connectionString: string): string {
   }
 }
 
+/**
+ * Log non-secret connection breadcrumbs (host, port, and the project-ref
+ * portion of the pooler username) so a misrouted connection string - wrong
+ * region/node, stale project ref, etc. - is easy to spot in Railway logs
+ * without ever printing the password.
+ */
+function logConnectionBreadcrumbs(connectionString: string): void {
+  try {
+    const url = new URL(connectionString);
+    // Pooler usernames look like "postgres.<project_ref>" - only the ref
+    // half is useful for correlating with the Supabase dashboard, and it's
+    // not a secret (it's part of the project's public URL/API endpoints).
+    const projectRef = decodeURIComponent(url.username).split('.')[1] ?? '(none)';
+    logger.info('PostgreSQL pool target', {
+      host: url.hostname,
+      port: url.port || '(default)',
+      projectRef
+    });
+  } catch {
+    // Non-parseable connection string - nothing safe to log, and this isn't
+    // fatal on its own (stripConflictingSslParams will also no-op on it).
+  }
+}
+
 export function createPool(connectionString: string): Pool {
   if (pool) {
     logger.warn('PostgreSQL pool already initialized, returning existing instance');
@@ -113,6 +137,7 @@ export function createPool(connectionString: string): Pool {
 
   try {
     logger.info('Initializing PostgreSQL connection pool...');
+    logConnectionBreadcrumbs(connectionString);
 
     pool = new Pool({
       connectionString: stripConflictingSslParams(connectionString),
@@ -166,12 +191,27 @@ export async function testConnection(targetPool: Pool): Promise<boolean> {
     logger.info('PostgreSQL connection test successful');
     return true;
   } catch (error) {
-    logger.error('PostgreSQL connection test failed', {
-      error: error instanceof Error ? error.message : String(error)
-    });
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('PostgreSQL connection test failed', { error: message });
+
+    // Supavisor (Supabase's pooler) reports this exact text when the
+    // project-ref in the username doesn't match any tenant it knows about -
+    // almost always a wrong pooler host/region, a stale project ref, or a
+    // paused project, never something fixable in application code.
+    if (/tenant.*(user)?.*not found/i.test(message)) {
+      logger.error(
+        'This looks like a Supavisor "tenant/user not found" error: the project ref in ' +
+        'SUPABASE_DATABASE_URL\'s username does not match a project on that pooler host. ' +
+        'Re-copy the exact connection string from Supabase Dashboard -> Database -> ' +
+        'Settings -> Connection Pooling (host/region and project ref must match exactly), ' +
+        'and confirm the project is not paused.'
+      );
+    }
+
     return false;
   }
 }
+
 
 export async function disconnectPool(): Promise<void> {
   if (pool) {
