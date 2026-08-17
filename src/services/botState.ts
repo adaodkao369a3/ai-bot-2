@@ -1,0 +1,154 @@
+/**
+ * Bot state management for Bot Kun v2
+ * Handles global enabled/disabled state with Supabase persistence
+ */
+
+import { getSupabaseClient } from '../database/supabase';
+import { logger } from '../utils/logger';
+
+export class BotStateService {
+  private cache: Map<string, boolean> = new Map();
+  private cacheInitialized = false;
+
+  /**
+   * Initialize the cache by loading all guild states from Supabase
+   */
+  async initialize(): Promise<void> {
+    if (this.cacheInitialized) {
+      logger.debug('Bot state cache already initialized');
+      return;
+    }
+
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('guild_settings')
+        .select('guild_id, bot_enabled');
+
+      if (error) {
+        throw error;
+      }
+
+      // Populate cache with database state
+      if (data) {
+        for (const setting of data) {
+          this.cache.set(setting.guild_id, setting.bot_enabled);
+        }
+      }
+
+      this.cacheInitialized = true;
+      logger.info(`Bot state cache initialized with ${this.cache.size} guilds`);
+    } catch (error) {
+      logger.error('Failed to initialize bot state cache', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Check if bot is enabled for a guild
+   * Defaults to true if no setting exists
+   */
+  async isEnabled(guildId: string): Promise<boolean> {
+    // Check cache first
+    if (this.cache.has(guildId)) {
+      return this.cache.get(guildId)!;
+    }
+
+    // If not in cache, fetch from database
+    try {
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('guild_settings')
+        .select('bot_enabled')
+        .eq('guild_id', guildId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No record found, default to enabled
+          logger.debug(`No bot state found for guild ${guildId}, defaulting to enabled`);
+          this.cache.set(guildId, true);
+          return true;
+        }
+        throw error;
+      }
+
+      const enabled = data?.bot_enabled ?? true;
+      this.cache.set(guildId, enabled);
+      return enabled;
+    } catch (error) {
+      logger.error('Failed to check bot enabled state', {
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      // Default to enabled on error to avoid breaking functionality
+      return true;
+    }
+  }
+
+  /**
+   * Set bot enabled/disabled state for a guild
+   */
+  async setEnabled(guildId: string, enabled: boolean): Promise<void> {
+    try {
+      const supabase = getSupabaseClient();
+      const { error } = await supabase
+        .from('guild_settings')
+        .upsert({
+          guild_id: guildId,
+          bot_enabled: enabled
+        }, {
+          onConflict: 'guild_id'
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      // Update cache
+      this.cache.set(guildId, enabled);
+      logger.info(`Bot state updated for guild ${guildId}: ${enabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      logger.error('Failed to set bot enabled state', {
+        guildId,
+        enabled,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Enable bot for a guild
+   */
+  async enable(guildId: string): Promise<void> {
+    await this.setEnabled(guildId, true);
+  }
+
+  /**
+   * Disable bot for a guild
+   */
+  async disable(guildId: string): Promise<void> {
+    await this.setEnabled(guildId, false);
+  }
+
+  /**
+   * Clear cache (useful for testing or forced refresh)
+   */
+  clearCache(): void {
+    this.cache.clear();
+    this.cacheInitialized = false;
+    logger.debug('Bot state cache cleared');
+  }
+
+  /**
+   * Get cache size for monitoring
+   */
+  getCacheSize(): number {
+    return this.cache.size;
+  }
+}
+
+export const botStateService = new BotStateService();

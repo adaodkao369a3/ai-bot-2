@@ -1,0 +1,56 @@
+{
+  "name": "bot-kun-2",
+  "version": "1.0.0",
+  "description": "Bot Kun v2 - TypeScript Discord bot with Supabase integration",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit",
+    "validate": "ts-node src/utils/validation.ts",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "typescript",
+    "supabase"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "@supabase/supabase-js": "^2.39.3",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "@types/jest": "^29.5.11",
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2",
+    "rimraf": "^5.0.5",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/tests"
+    ],
+    "testMatch": [
+      "**/*.test.ts"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/**/*.d.ts"
+    ],
+    "forceExit": true
+  }
+}

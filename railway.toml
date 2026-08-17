@@ -1,0 +1,11 @@
+[build]
+builder = "NIXPACKS"
+
+[build.env]
+NPM_CONFIG_PRODUCTION = "false"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
