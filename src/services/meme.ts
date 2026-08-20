@@ -1,14 +1,15 @@
 /**
  * Meme service for Bot Kun.
- * Tracks seven addressed chat exchanges and fetches a real meme from the
- * meme API. The subreddit is selected from the recent conversation so the
- * result is at least topically related instead of always being random.
+ * Fetches real memes from the meme API with validation and fallback.
+ * Supports idle-based meme drops and explicit meme requests.
  */
 
 import {
   MEME_API_URL,
-  MEME_MIN_MESSAGES_BEFORE_DROP,
-  MEME_MAX_MESSAGES_BEFORE_DROP,
+  MEME_IDLE_ENABLED,
+  MEME_IDLE_INACTIVITY_MINUTES,
+  MEME_IDLE_PROBABILITY,
+  MEME_IDLE_COOLDOWN_MINUTES,
   MEME_FETCH_TIMEOUT_MS
 } from '../config';
 import { logger } from '../utils/logger';
@@ -27,52 +28,83 @@ export interface Meme {
   imageUrl: string;
   postLink: string;
   subreddit: string;
+  verified: boolean;
 }
 
-interface UserMemeState {
-  countSinceLastMeme: number;
-  threshold: number;
+interface ChannelIdleState {
+  lastMessageTime: number;
+  lastMemeDropTime: number;
 }
 
 export class MemeService {
-  private state: Map<string, UserMemeState> = new Map();
+  private channelStates: Map<string, ChannelIdleState> = new Map();
 
-  private randomThreshold(): number {
-    const min = MEME_MIN_MESSAGES_BEFORE_DROP;
-    const max = MEME_MAX_MESSAGES_BEFORE_DROP;
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-
-  private getOrCreateState(userId: string): UserMemeState {
-    let entry = this.state.get(userId);
-    if (!entry) {
-      entry = { countSinceLastMeme: 0, threshold: this.randomThreshold() };
-      this.state.set(userId, entry);
+  /**
+   * Check if a meme should be dropped based on idle time
+   */
+  shouldDropIdleMeme(channelId: string): boolean {
+    if (!MEME_IDLE_ENABLED) {
+      return false;
     }
-    return entry;
-  }
 
-  shouldDropMeme(userId: string): boolean {
-    const entry = this.getOrCreateState(userId);
-    entry.countSinceLastMeme++;
+    const now = Date.now();
+    const state = this.channelStates.get(channelId);
 
-    if (entry.countSinceLastMeme >= entry.threshold) {
-      entry.countSinceLastMeme = 0;
-      entry.threshold = this.randomThreshold();
-      return true;
+    if (!state) {
+      return false;
+    }
+
+    const inactiveMs = now - state.lastMessageTime;
+    const inactiveMinutes = inactiveMs / (60 * 1000);
+    const cooldownMs = MEME_IDLE_COOLDOWN_MINUTES * 60 * 1000;
+    const timeSinceLastMeme = now - state.lastMemeDropTime;
+
+    // Check if inactive long enough and cooldown has passed
+    if (inactiveMinutes >= MEME_IDLE_INACTIVITY_MINUTES && timeSinceLastMeme >= cooldownMs) {
+      // Random chance to drop
+      return Math.random() < MEME_IDLE_PROBABILITY;
     }
 
     return false;
   }
 
   /**
-   * Fetch a meme that roughly matches the supplied conversation.
-   *
-   * meme-api.com supports subreddit-specific requests, so we use simple,
-   * deterministic topic routing rather than pretending a random meme is
-   * semantically relevant.
+   * Update channel activity state
    */
-  async fetchMeme(conversationText = ''): Promise<Meme | null> {
+  updateChannelActivity(channelId: string): void {
+    const state = this.channelStates.get(channelId) || {
+      lastMessageTime: Date.now(),
+      lastMemeDropTime: 0
+    };
+    state.lastMessageTime = Date.now();
+    this.channelStates.set(channelId, state);
+  }
+
+  /**
+   * Record that a meme was dropped for cooldown tracking
+   */
+  recordMemeDrop(channelId: string): void {
+    const state = this.channelStates.get(channelId);
+    if (state) {
+      state.lastMemeDropTime = Date.now();
+      this.channelStates.set(channelId, state);
+    }
+  }
+
+  /**
+   * Fetch a meme that roughly matches the supplied conversation.
+   * Implements fallback strategy: specific category -> broader search -> generic meme
+   */
+  async fetchMeme(conversationText = '', requestedCategory?: string): Promise<Meme | null> {
+    // If specific category requested, try that first
+    if (requestedCategory) {
+      const categoryMeme = await this.fetchFromCategory(requestedCategory);
+      if (categoryMeme) {
+        return categoryMeme;
+      }
+    }
+
+    // Try conversation-based subreddits
     const subreddits = this.getCandidateSubreddits(conversationText);
     const maxAttemptsPerSubreddit = 2;
 
@@ -88,7 +120,55 @@ export class MemeService {
       }
     }
 
+    // Fallback to generic memes
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const meme = await this.fetchFromEndpoint(MEME_API_URL);
+      if (meme) {
+        return meme;
+      }
+    }
+
     return null;
+  }
+
+  /**
+   * Fetch from a specific category/subreddit
+   */
+  private async fetchFromCategory(category: string): Promise<Meme | null> {
+    const subreddit = this.mapCategoryToSubreddit(category);
+    if (!subreddit) {
+      return null;
+    }
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`);
+      if (meme) {
+        return meme;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Map user-requested category to subreddit
+   */
+  private mapCategoryToSubreddit(category: string): string | null {
+    const categoryMap: Record<string, string> = {
+      'jojo': 'StardustCrusaders',
+      'anime': 'animemes',
+      'cat': 'catmemes',
+      'dog': 'dogmemes',
+      'programming': 'ProgrammerHumor',
+      'coding': 'ProgrammerHumor',
+      'gaming': 'gamingmemes',
+      'wholesome': 'wholesomememes',
+      'school': 'schoolmemes',
+      'work': 'workmemes'
+    };
+
+    const normalized = category.toLowerCase();
+    return categoryMap[normalized] || null;
   }
 
   private async fetchFromEndpoint(endpoint: string): Promise<Meme | null> {
@@ -106,11 +186,18 @@ export class MemeService {
         return null;
       }
 
+      // Validate URL exists and is accessible
+      const isValid = await this.validateImageUrl(data.url);
+      if (!isValid) {
+        return null;
+      }
+
       return {
         title: data.title,
         imageUrl: data.url,
         postLink: data.postLink,
-        subreddit: data.subreddit
+        subreddit: data.subreddit,
+        verified: true
       };
     } catch (error) {
       logger.warn('Failed to fetch meme', {
@@ -120,6 +207,27 @@ export class MemeService {
       return null;
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Validate that an image URL is accessible
+   */
+  private async validateImageUrl(url: string): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      const response = await fetch(url, { 
+        method: 'HEAD',
+        signal: controller.signal 
+      });
+      
+      clearTimeout(timeoutId);
+
+      return response.ok && response.headers.get('content-type')?.startsWith('image/') || false;
+    } catch {
+      return false;
     }
   }
 
@@ -155,7 +263,7 @@ export class MemeService {
   }
 
   clearAll(): void {
-    this.state.clear();
+    this.channelStates.clear();
   }
 }
 

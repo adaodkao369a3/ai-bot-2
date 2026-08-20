@@ -15,11 +15,12 @@ export const RATE_LIMIT_MAX_INTERACTIONS = 10;
 export const RATE_LIMIT_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
 
 // Meme configuration
-// After seven addressed chat exchanges with a user, Bot Kun drops an
-// actual meme pulled from a meme API.
+// Idle-based meme drops instead of message-count based
 export const MEME_API_URL = "https://meme-api.com/gimme";
-export const MEME_MIN_MESSAGES_BEFORE_DROP = 7;
-export const MEME_MAX_MESSAGES_BEFORE_DROP = 7;
+export const MEME_IDLE_ENABLED = true;
+export const MEME_IDLE_INACTIVITY_MINUTES = 3;
+export const MEME_IDLE_PROBABILITY = 0.35;
+export const MEME_IDLE_COOLDOWN_MINUTES = 15;
 export const MEME_FETCH_TIMEOUT_MS = 5000;
 
 // Memory configuration

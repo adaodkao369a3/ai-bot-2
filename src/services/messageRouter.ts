@@ -17,6 +17,8 @@ import { AIService, createAIService } from './ai';
 import { responseSanitizer } from './responseSanitizer';
 import { memeService } from './meme';
 import { mediaService } from './media';
+import { interactionPoolsService } from './interactionPools';
+import { responseMemoryService } from './responseMemory';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
 
@@ -104,7 +106,7 @@ export class MessageRouter {
         rateLimitService.recordInteraction(userId);
       }
 
-      // Step 6: Add message to conversation context
+      // Step 6: Add message to conversation context and update activity
       const globalDisplayName = message.author.globalName ?? message.author.displayName;
 
       conversationContextService.addMessage(
@@ -114,6 +116,9 @@ export class MessageRouter {
         message.content,
         false
       );
+
+      // Update channel activity for idle meme tracking
+      memeService.updateChannelActivity(channelId);
 
       // Step 7: Extract actual message content (remove bot name/mention)
       const cleanContent = addressingService.extractContent(message, botUserId);
@@ -220,6 +225,9 @@ export class MessageRouter {
         // Sanitize the response to prevent mention abuse and format leakage
         const sanitizedContent = responseSanitizer.sanitize(aiResponse.content);
 
+        // Add to response memory to avoid repetition
+        responseMemoryService.addResponse(sanitizedContent);
+
         // Add Bot Kun's response to conversation context (use sanitized version)
         conversationContextService.addMessage(
           channelId,
@@ -240,9 +248,8 @@ export class MessageRouter {
         });
         logger.info(`Bot Kun responded to user ${userId} in guild ${guildId}`);
 
-        // Step 16: Maybe drop an actual meme (from a meme API, not the AI)
-        // after a couple exchanges with this person.
-        if (memeService.shouldDropMeme(userId)) {
+        // Step 16: Check for idle meme drop (only after response, don't interrupt)
+        if (memeService.shouldDropIdleMeme(channelId)) {
           await this.dropMeme(message, conversationContext);
         }
       } else {
@@ -313,17 +320,18 @@ export class MessageRouter {
     const content = cleanContent.toLowerCase();
 
     if (this.isMemeRequest(content)) {
-      const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`);
+      const category = this.extractMemeCategory(content);
+      const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`, category);
       if (!meme) {
         await message.reply({
-          content: 'I tried to find one that fits, but the meme API came up empty.',
+          content: 'nahhh couldn\'t find one 💀',
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
 
       await message.reply({
-        content: 'Got you — this one fits the vibe.',
+        content: 'found one 💀',
         embeds: [
           new EmbedBuilder()
             .setImage(meme.imageUrl)
@@ -336,8 +344,8 @@ export class MessageRouter {
 
     const gifAction = this.extractGifAction(content);
     if (gifAction) {
-      const gif = await mediaService.searchGif(gifAction);
-      if (!gif) {
+      const interactionResponse = await interactionPoolsService.getInteractionResponse(gifAction);
+      if (!interactionResponse) {
         await message.reply({
           content: `I couldn't find a ${gifAction} GIF right now.`,
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
@@ -345,15 +353,22 @@ export class MessageRouter {
         return true;
       }
 
-      await message.reply({
-        content: this.getGifText(gifAction),
-        embeds: [
-          new EmbedBuilder()
-            .setImage(gif.url)
-            .setColor(0x9B59B6)
-        ],
-        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
-      });
+      if (interactionResponse.gif) {
+        await message.reply({
+          content: interactionResponse.text,
+          embeds: [
+            new EmbedBuilder()
+              .setImage(interactionResponse.gif.url)
+              .setColor(0x9B59B6)
+          ],
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      } else {
+        await message.reply({
+          content: interactionResponse.text,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      }
       return true;
     }
 
@@ -362,7 +377,7 @@ export class MessageRouter {
       const video = await mediaService.searchYoutube(youtubeQuery);
       if (!video) {
         await message.reply({
-          content: 'I couldn\'t pull a YouTube video right now. Check that the YouTube API key is configured.',
+          content: 'nahhh couldn\'t find one 💀',
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
@@ -371,7 +386,7 @@ export class MessageRouter {
       // IMPORTANT: use the watch URL as message content, not an EmbedBuilder
       // URL. Discord renders this as its native YouTube video player.
       await message.reply({
-        content: `Here you go — ${video.title}\nhttps://www.youtube.com/watch?v=${video.videoId}`,
+        content: `found one 💀\nhttps://www.youtube.com/watch?v=${video.videoId}`,
         allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
       return true;
@@ -384,6 +399,22 @@ export class MessageRouter {
     return /(?:pull|show|get|send|give|find|bring|drop|post|want)\b[\s\S]{0,60}\bmeme(?:s)?\b/i.test(content)
       || /\bmeme(?:s)?\s*(?:please|pls|plz)?$/i.test(content)
       || /^(?:meme|memes)$/i.test(content);
+  }
+
+  private extractMemeCategory(content: string): string | undefined {
+    const categoryPatterns = [
+      /\b(jojo|anime|cat|dog|programming|coding|gaming|wholesome|school|work)\s+meme/i,
+      /\bmeme\s+(?:of|about|for)\s+(jojo|anime|cat|dog|programming|coding|gaming|wholesome|school|work)/i
+    ];
+
+    for (const pattern of categoryPatterns) {
+      const match = content.match(pattern);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+
+    return undefined;
   }
 
   private extractGifAction(content: string): string | null {
@@ -410,20 +441,6 @@ export class MessageRouter {
     }
 
     return null;
-  }
-
-  private getGifText(action: string): string {
-    switch (action) {
-      case 'hug':
-      case 'cuddle':
-        return `Come here — ${action} me.`;
-      case 'punch':
-      case 'kick':
-      case 'slap':
-        return `Alright, ${action} me. I asked for this.`;
-      default:
-        return `Say less — ${action} me.`;
-    }
   }
 
   private extractYoutubeQuery(content: string): string | null {
@@ -453,7 +470,7 @@ export class MessageRouter {
       }
 
       await message.reply({
-        content: 'A meme for the current vibe:',
+        content: 'vibe check 💀',
         embeds: [
           new EmbedBuilder()
             .setImage(meme.imageUrl)
@@ -463,6 +480,9 @@ export class MessageRouter {
           parse: []
         }
       });
+
+      // Record meme drop for cooldown
+      memeService.recordMemeDrop(message.channelId);
     } catch (error) {
       logger.warn('Failed to drop meme', {
         error: error instanceof Error ? error.message : String(error)

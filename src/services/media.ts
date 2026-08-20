@@ -17,6 +17,7 @@ export interface GifResult {
 export interface YoutubeResult {
   videoId: string;
   title: string;
+  verified: boolean;
 }
 
 interface KlipyResult {
@@ -136,7 +137,8 @@ export class MediaService {
 
       return {
         videoId: item.id.videoId,
-        title: item.snippet?.title ?? query
+        title: item.snippet?.title ?? query,
+        verified: true
       };
     } catch (error) {
       logger.warn('Failed to search YouTube', {
