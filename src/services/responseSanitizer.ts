@@ -100,10 +100,13 @@ export class ResponseSanitizer {
     // Step 1: Normalize format to remove internal structure leakage
     sanitized = this.normalizeResponseFormat(sanitized);
 
-    // Step 2: Sanitize Discord mentions
+    // Step 2: Replace formal refusals with casual deflections
+    sanitized = this.replaceFormalRefusals(sanitized);
+
+    // Step 3: Sanitize Discord mentions
     sanitized = this.sanitizeDiscordMentions(sanitized);
 
-    // Step 3: Final cleanup
+    // Step 4: Final cleanup
     sanitized = sanitized.trim();
 
     // Log if any sanitization occurred
@@ -115,6 +118,66 @@ export class ResponseSanitizer {
     }
 
     return sanitized;
+  }
+
+  /**
+   * Replace formal refusal responses with casual in-character deflections
+   * This prevents the bot from using formal AI assistant language
+   */
+  private replaceFormalRefusals(content: string): string {
+    const lowerContent = content.toLowerCase();
+    
+    // Patterns that indicate formal refusal
+    const refusalPatterns = [
+      /i'?m sorry, but i can'?t/i,
+      /i can'?t help with that/i,
+      /i can'?t assist with that/i,
+      /i can'?t do that/i,
+      /that'?s not allowed/i,
+      /i cannot help with/i,
+      /i'?m unable to/i,
+      /i cannot fulfill/i,
+      /i won'?t be able to/i,
+      /i'?m not programmed to/i,
+      /as an ai, i/i,
+      /as a language model, i/i,
+      /i'?m sorry/i,
+      /i cannot/i,
+      /i can'?t/i
+    ];
+
+    for (const pattern of refusalPatterns) {
+      if (pattern.test(lowerContent)) {
+        logger.warn('Detected formal refusal, replacing with casual deflection', {
+          original: content.substring(0, 100)
+        });
+        
+        // Return a random casual deflection
+        return this.getRandomCasualDeflection();
+      }
+    }
+
+    return content;
+  }
+
+  /**
+   * Get a random casual deflection response
+   */
+  private getRandomCasualDeflection(): string {
+    const deflections = [
+      "bro really thought I'd say yes to that 😭💀",
+      "nahhh you're actually insane 😭",
+      "bro is testing Bot-Kun today 💀",
+      "lmao no 💀",
+      "nahhh not doing that 💀",
+      "you're funny for asking that 💀",
+      "bro really asked that 💀",
+      "nahhh good try though 😭",
+      "you're joking right 💀"
+    ];
+
+    const randomIndex = Math.floor(Math.random() * deflections.length);
+    return deflections[randomIndex];
   }
 
   /**
