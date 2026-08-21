@@ -19,6 +19,7 @@ import { memeService } from './meme';
 import { mediaService } from './media';
 import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
+import { GUIDE_CHANNEL_ID } from '../config';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
 
@@ -546,6 +547,10 @@ export class MessageRouter {
         }
         break;
 
+      case '~guide':
+        await this.handleGuide(message);
+        break;
+
       default:
         // Unknown command, ignore
         break;
@@ -690,6 +695,87 @@ export class MessageRouter {
         error: error instanceof Error ? error.message : String(error)
       });
       await message.reply('Failed to unblacklist user. Try again later.');
+    }
+  }
+
+  /**
+   * Handle ~guide command
+   * Admin-only command to post the Bot-Kun guide embed in the designated channel
+   */
+  private async handleGuide(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    const member = message.member as GuildMember;
+    
+    // Permission check - only staff with memory eligibility can use ~guide
+    if (!permissionService.hasMemoryEligibility(member)) {
+      await message.reply('You don\'t have permission to use that command. Nice try though.');
+      return;
+    }
+
+    // Check if command is used in the designated guide channel
+    if (GUIDE_CHANNEL_ID && message.channelId !== GUIDE_CHANNEL_ID) {
+      await message.reply('This command can only be used in the designated rules/overview channel.');
+      return;
+    }
+
+    try {
+      // Create the guide embed
+      const guideEmbed = new EmbedBuilder()
+        .setColor(0x9B59B6)
+        .setTitle('<:botkun_smile:1529443061581611120> Bot-Kun\'s Little Guide <:botkun_love:1530299136664928377>')
+        .setDescription('<:botkun_think:1535318883077066752> So... who is Bot-Kun?\n\nBot-Kun is your chaotic little Discord companion who likes to yap, throw memes at people, find random videos, and occasionally question why you decided to talk to him in the first place <:chungussmirk:1529450300493140018>\n\nHe\'s here to chat, mess around, react to things, and generally make the server a little less boring.\n\n<:catgoodjob:1529429232038711546> You don\'t really need complicated commands either. Just talk to him normally.')
+        .addFields(
+          {
+            name: '<:botkun_smile:1529443061581611120> Talk to Bot-Kun',
+            value: 'Mention him or just say Bot-Kun and start talking.\n\n```\nBot-Kun what\'s up?\n@Bot-Kun tell me something funny\nBot-Kun do you like cats?\n```\n\nHe\'ll figure it out. Probably. <:botkun_think:1535318883077066752>',
+            inline: false
+          },
+          {
+            name: '<:gaga:1536398360687157289> Memes',
+            value: 'Feeling like your day needs more brainrot?\n\nTry:\n\n```\nmeme\npull a meme\nshow me a meme\ncat meme\nanime meme\ngaming meme\ncoding meme\nJoJo meme\n```\n\nAnd yes, you can get specific. <:catnoted:1529429237675589753>',
+            inline: false
+          },
+          {
+            name: '<:flirt:1529429667126181958> GIF Reactions',
+            value: 'Want Bot-Kun to react?\n\n```\nhug me · kiss me · cuddle me\npat me · high five me · wave at me\npunch me · kick me · slap me\ncry · laugh · dance\n```\n\nAffection or violence.\nThe two pillars of Discord. <:smirk:1529450331371733003>',
+            inline: false
+          },
+          {
+            name: '<:surprised:1526979432605286420> Videos & YouTube',
+            value: 'Need something to watch?\n\n```\nplay [song]\nfind [song] on youtube\nshow me a video of [topic]\nget me some asmr\n```\n\nBot-Kun will go hunting for it. <:whoreknee:1536398365099819008>',
+            inline: false
+          },
+          {
+            name: '<:botkun_think:1535318883077066752> Memory',
+            value: 'You can tell Bot-Kun your name:\n\n```\nmy name is Alex\ncall me Alex\n```\n\nHe\'ll remember it for future conversations. <:catnoted:1529429237675589753>',
+            inline: false
+          },
+          {
+            name: '<:botkun_tired:1530298969123455166> And sometimes...',
+            value: 'If the channel gets quiet for a while, Bot-Kun might randomly appear with a meme.\n\nNobody asked.\nHe just felt like it. <:ttongue:1529450341643583588>',
+            inline: false
+          },
+          {
+            name: '<:catgoodjob:1529429232038711546> That\'s basically it.',
+            value: 'Talk to him. Ask for memes. Get some GIFs. Find a video. Cause problems.\n\nBot-Kun will be around. <:botkun_love:1530299136664928377>',
+            inline: false
+          }
+        )
+        .setFooter({ text: '~guide — because apparently I needed documentation for being annoying. <:smirk:1529450331371733003>' });
+
+      // Delete the command message first
+      await message.delete();
+
+      // Send the guide embed
+      await message.channel.send({ embeds: [guideEmbed] });
+
+      logger.info(`Guide embed posted by ${message.author.id} in channel ${message.channelId}`);
+    } catch (error) {
+      logger.error('Failed to post guide embed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply('Failed to post the guide. Try again later.');
     }
   }
   /**

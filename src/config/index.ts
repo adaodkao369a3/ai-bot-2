@@ -10,6 +10,9 @@ export const EXTRA_ROLE_ID = "1535285274832277514";
 export const FEATURED_EXTRA_ROLE_ID = "1535285299410771988";
 export const SUPPORTING_CAST_ROLE_ID = "1535285344952651829";
 
+// Channel IDs
+export const GUIDE_CHANNEL_ID = ""; // Designated rules/overview channel for ~guide command (to be configured)
+
 // Rate limiting configuration
 export const RATE_LIMIT_MAX_INTERACTIONS = 10;
 export const RATE_LIMIT_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
