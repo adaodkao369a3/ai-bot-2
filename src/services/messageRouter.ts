@@ -767,8 +767,7 @@ export class MessageRouter {
             value: 'Talk to him. Ask for memes. Get some GIFs. Find a video. Cause problems.\n\nBot-Kun will be around. <:botkun_love:1530299136664928377>',
             inline: false
           }
-        )
-        .setFooter({ text: '~guide — because apparently I needed documentation for being annoying. <:smirk:1529450331371733003>' });
+        );
 
       // Delete the command message first
       await message.delete();
