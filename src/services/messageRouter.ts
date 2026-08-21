@@ -719,6 +719,12 @@ export class MessageRouter {
       return;
     }
 
+    // Ensure channel is a guild-based channel that supports .send()
+    if (!message.channel.isSendable()) {
+      await message.reply('This command cannot be used in this channel type.');
+      return;
+    }
+
     try {
       // Create the guide embed
       const guideEmbed = new EmbedBuilder()
@@ -767,7 +773,7 @@ export class MessageRouter {
       // Delete the command message first
       await message.delete();
 
-      // Send the guide embed
+      // Send the guide embed (channel is now narrowed to sendable type)
       await message.channel.send({ embeds: [guideEmbed] });
 
       logger.info(`Guide embed posted by ${message.author.id} in channel ${message.channelId}`);
