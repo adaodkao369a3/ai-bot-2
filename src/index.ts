@@ -108,6 +108,7 @@ async function main(): Promise<void> {
 /**
  * Background task to check for scheduled meme drops
  * This runs every minute to see if any channels need a meme drop
+ * Only drops memes in channels where the bot is actively being talked to
  */
 async function checkAndDropMemes(client: Client): Promise<void> {
   if (!client.user) return;
@@ -122,39 +123,42 @@ async function checkAndDropMemes(client: Client): Promise<void> {
       if (!channel.isTextBased() || channel.isDMBased()) continue;
 
       try {
-        // Initialize channel state if needed
-        memeService.initializeChannel(channel.id);
-        
-        // Check if this channel should get a meme drop
+        // Check if this channel should get a meme drop (only if recently active)
         if (memeService.shouldDropIdleMeme(channel.id)) {
-          // Get the last message in the channel to have context
-          const messages = await channel.messages.fetch({ limit: 1 });
-          const lastMessage = messages.first();
+          // Verify the channel is actually active by checking recent messages
+          const messages = await channel.messages.fetch({ limit: 5 });
+          const recentMessages = messages.filter(m => !m.author.bot && m.createdTimestamp > Date.now() - 30 * 60 * 1000); // Messages from last 30 minutes
           
-          if (lastMessage && !lastMessage.author.bot) {
-            // Drop a meme with conversation context
-            const conversationContext = lastMessage.content || '';
-            const meme = await memeService.fetchMeme(conversationContext);
+          // Only drop meme if there's recent human activity in the channel
+          if (recentMessages.size > 0) {
+            // Get the last message for context
+            const lastMessage = messages.first();
             
-            if (meme) {
-              const dropMessages = [
-                'vibe check',
-                'random meme drop',
-                'here\'s something',
-                'meme time'
-              ];
+            if (lastMessage && !lastMessage.author.bot) {
+              // Drop a meme with conversation context
+              const conversationContext = lastMessage.content || '';
+              const meme = await memeService.fetchMeme(conversationContext);
               
-              await channel.send({
-                content: dropMessages[Math.floor(Math.random() * dropMessages.length)],
-                embeds: [
-                  new EmbedBuilder()
-                    .setImage(meme.imageUrl)
-                    .setColor(0xFFA500)
-                ]
-              });
-              
-              memeService.recordMemeDrop(channel.id);
-              logger.info(`Dropped scheduled meme in channel ${channel.id}`);
+              if (meme) {
+                const dropMessages = [
+                  'vibe check',
+                  'random meme drop',
+                  'here\'s something',
+                  'meme time'
+                ];
+                
+                await channel.send({
+                  content: dropMessages[Math.floor(Math.random() * dropMessages.length)],
+                  embeds: [
+                    new EmbedBuilder()
+                      .setImage(meme.imageUrl)
+                      .setColor(0xFFA500)
+                  ]
+                });
+                
+                memeService.recordMemeDrop(channel.id);
+                logger.info(`Dropped scheduled meme in active channel ${channel.id}`);
+              }
             }
           }
         }

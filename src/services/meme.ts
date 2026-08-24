@@ -45,6 +45,7 @@ export class MemeService {
    * Check if a meme should be dropped based on the new scheduling system
    * - Drop a meme every 15 minutes if the channel is active
    * - If no reply to the last meme, stop dropping until someone talks again
+   * - Only works for channels that have recent activity
    */
   shouldDropIdleMeme(channelId: string): boolean {
     if (!MEME_IDLE_ENABLED) {
@@ -54,6 +55,7 @@ export class MemeService {
     const now = Date.now();
     const state = this.channelStates.get(channelId);
 
+    // Only consider channels that have been initialized through activity
     if (!state) {
       return false;
     }
@@ -61,6 +63,12 @@ export class MemeService {
     const fifteenMinutes = 15 * 60 * 1000;
     const thirtyMinutes = 30 * 60 * 1000;
     const timeSinceLastMeme = now - state.lastMemeDropTime;
+    const timeSinceLastMessage = now - state.lastMessageTime;
+
+    // If no messages in the last hour, don't drop memes (channel is inactive)
+    if (timeSinceLastMessage > 60 * 60 * 1000) {
+      return false;
+    }
 
     // If we're waiting for a reply, don't drop more memes
     if (state.awaitingReply) {
@@ -97,19 +105,7 @@ export class MemeService {
     this.channelStates.set(channelId, state);
   }
 
-  /**
-   * Initialize channel state for the scheduler
-   */
-  initializeChannel(channelId: string): void {
-    if (!this.channelStates.has(channelId)) {
-      this.channelStates.set(channelId, {
-        lastMessageTime: Date.now(),
-        lastMemeDropTime: 0,
-        lastMemeReplyTime: 0,
-        awaitingReply: false
-      });
-    }
-  }
+
 
   /**
    * Record that a meme was dropped for cooldown tracking
