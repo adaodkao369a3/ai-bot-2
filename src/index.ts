@@ -75,9 +75,10 @@ async function main(): Promise<void> {
 
     // Step 7: Start background meme scheduler
     if (discordClient) {
+      const client = discordClient; // Capture non-null client for the interval
       memeCheckInterval = setInterval(async () => {
         try {
-          await checkAndDropMemes(discordClient);
+          await checkAndDropMemes(client);
         } catch (error) {
           logger.error('Error in meme scheduler', {
             error: error instanceof Error ? error.message : String(error)
