@@ -172,7 +172,7 @@ export class MemeService {
    * Get related subreddits for a category if the direct one fails
    */
   private getRelatedSubreddits(category: string): string[] {
-    const category = category.toLowerCase();
+    const normalizedCategory = category.toLowerCase();
     const relatedMap: Record<string, string[]> = {
       'anime': ['animemes', 'StardustCrusaders', 'anime_irl'],
       'cat': ['catmemes', 'cats', 'CatPictures'],
@@ -187,7 +187,7 @@ export class MemeService {
       'tech': ['tech', 'technology', 'gadgets']
     };
 
-    return relatedMap[category] || [];
+    return relatedMap[normalizedCategory] || [];
   }
 
   /**
