@@ -457,8 +457,13 @@ export class MessageRouter {
 
   private extractMemeCategory(content: string): string | undefined {
     const categoryPatterns = [
-      /\b(jojo|anime|cat|dog|programming|coding|gaming|wholesome|school|work)\s+meme/i,
-      /\bmeme\s+(?:of|about|for)\s+(jojo|anime|cat|dog|programming|coding|gaming|wholesome|school|work)/i
+      // Direct patterns: "anime meme", "meme about cats", etc.
+      /\b(jojo|anime|manga|cat|kitten|dog|puppy|programming|coding|code|developer|gaming|games|game|gamer|wholesome|cute|school|college|homework|work|office|job|boss|minecraft|fortnite|valorant|sports|football|basketball|soccer|music|movies|film|tv|politics|science|math|history|food|cooking|fitness|gym|cars|technology|tech|phones|crypto|bitcoin|nft|dank|funny|reaction)\s+meme/i,
+      /\bmeme\s+(?:of|about|for|with|like)\s+(jojo|anime|manga|cat|kitten|dog|puppy|programming|coding|code|developer|gaming|games|game|gamer|wholesome|cute|school|college|homework|work|office|job|boss|minecraft|fortnite|valorant|sports|football|basketball|soccer|music|movies|film|tv|politics|science|math|history|food|cooking|fitness|gym|cars|technology|tech|phones|crypto|bitcoin|nft|dank|funny|reaction)/i,
+      // Topic-only patterns: "give me a cat meme" -> extract "cat"
+      /(?:show|get|give|pull|send|find)\s+(?:me\s+)?(?:a\s+)?(?:\w+\s+)?meme\s+(?:about|of|with|for|like)?\s*(\w+)/i,
+      // Direct topic mentions in meme requests
+      /meme\s*(?:about|of|with|for|like)?\s*(\w+)/i
     ];
 
     for (const pattern of categoryPatterns) {

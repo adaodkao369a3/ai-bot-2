@@ -124,17 +124,26 @@ export class MemeService {
    * Implements fallback strategy: specific category -> broader search -> generic meme
    */
   async fetchMeme(conversationText = '', requestedCategory?: string): Promise<Meme | null> {
-    // If specific category requested, try that first
+    // If specific category requested, try that first with more attempts
     if (requestedCategory) {
       const categoryMeme = await this.fetchFromCategory(requestedCategory);
       if (categoryMeme) {
         return categoryMeme;
       }
+      
+      // Try related subreddits if the specific category fails
+      const relatedSubreddits = this.getRelatedSubreddits(requestedCategory);
+      for (const subreddit of relatedSubreddits) {
+        const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`);
+        if (meme) {
+          return meme;
+        }
+      }
     }
 
     // Try conversation-based subreddits
     const subreddits = this.getCandidateSubreddits(conversationText);
-    const maxAttemptsPerSubreddit = 2;
+    const maxAttemptsPerSubreddit = 3; // Increased attempts for better topic matching
 
     for (const subreddit of subreddits) {
       for (let attempt = 0; attempt < maxAttemptsPerSubreddit; attempt++) {
@@ -148,8 +157,8 @@ export class MemeService {
       }
     }
 
-    // Fallback to generic memes
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Fallback to generic memes only if all else fails
+    for (let attempt = 0; attempt < 2; attempt++) {
       const meme = await this.fetchFromEndpoint(MEME_API_URL);
       if (meme) {
         return meme;
@@ -157,6 +166,28 @@ export class MemeService {
     }
 
     return null;
+  }
+
+  /**
+   * Get related subreddits for a category if the direct one fails
+   */
+  private getRelatedSubreddits(category: string): string[] {
+    const category = category.toLowerCase();
+    const relatedMap: Record<string, string[]> = {
+      'anime': ['animemes', 'StardustCrusaders', 'anime_irl'],
+      'cat': ['catmemes', 'cats', 'CatPictures'],
+      'dog': ['dogmemes', 'dogs', 'DogPictures'],
+      'gaming': ['gamingmemes', 'gaming', 'Games'],
+      'programming': ['ProgrammerHumor', 'coding', 'programming'],
+      'work': ['workmemes', 'work', 'corporate'],
+      'school': ['schoolmemes', 'college', 'education'],
+      'music': ['musicmemes', 'music', 'Music'],
+      'movies': ['moviememes', 'movies', 'film'],
+      'sports': ['sports', 'nba', 'nfl'],
+      'tech': ['tech', 'technology', 'gadgets']
+    };
+
+    return relatedMap[category] || [];
   }
 
   /**
@@ -185,17 +216,61 @@ export class MemeService {
     const categoryMap: Record<string, string> = {
       'jojo': 'StardustCrusaders',
       'anime': 'animemes',
+      'manga': 'animemes',
       'cat': 'catmemes',
+      'kitten': 'catmemes',
       'dog': 'dogmemes',
+      'puppy': 'dogmemes',
       'programming': 'ProgrammerHumor',
       'coding': 'ProgrammerHumor',
+      'code': 'ProgrammerHumor',
+      'developer': 'ProgrammerHumor',
       'gaming': 'gamingmemes',
+      'games': 'gamingmemes',
+      'game': 'gamingmemes',
+      'gamer': 'gamingmemes',
       'wholesome': 'wholesomememes',
+      'cute': 'wholesomememes',
       'school': 'schoolmemes',
-      'work': 'workmemes'
+      'college': 'schoolmemes',
+      'homework': 'schoolmemes',
+      'work': 'workmemes',
+      'office': 'workmemes',
+      'job': 'workmemes',
+      'boss': 'workmemes',
+      'minecraft': 'Minecraft',
+      'fortnite': 'Fortnite',
+      'valorant': 'Valorant',
+      'sports': 'sports',
+      'football': 'sports',
+      'basketball': 'sports',
+      'soccer': 'sports',
+      'music': 'musicmemes',
+      'movies': 'moviememes',
+      'film': 'moviememes',
+      'tv': 'television',
+      'politics': 'PoliticalHumor',
+      'science': 'science',
+      'math': 'mathmemes',
+      'history': 'historymemes',
+      'food': 'foodmemes',
+      'cooking': 'foodmemes',
+      'fitness': 'fitness',
+      'gym': 'fitness',
+      'cars': 'cars',
+      'technology': 'tech',
+      'tech': 'tech',
+      'phones': 'tech',
+      'crypto': 'CryptoCurrency',
+      'bitcoin': 'CryptoCurrency',
+      'nft': 'NFT',
+      'memes': 'memes',
+      'dank': 'dankmemes',
+      'funny': 'funny',
+      'reaction': 'reactiongifs'
     };
 
-    const normalized = category.toLowerCase();
+    const normalized = category.toLowerCase().trim();
     return categoryMap[normalized] || null;
   }
 
@@ -264,14 +339,30 @@ export class MemeService {
     const candidates: string[] = [];
 
     const topicMap: Array<{ subreddit: string; words: string[] }> = [
-      { subreddit: 'catmemes', words: ['cat', 'kitty', 'kitten', 'meow'] },
-      { subreddit: 'dogmemes', words: ['dog', 'puppy', 'pup', 'woof'] },
-      { subreddit: 'animemes', words: ['anime', 'manga', 'waifu', 'otaku'] },
-      { subreddit: 'ProgrammerHumor', words: ['code', 'coding', 'program', 'programming', 'developer', 'bug', 'javascript', 'typescript', 'python'] },
-      { subreddit: 'gamingmemes', words: ['game', 'gaming', 'gamer', 'minecraft', 'valorant', 'fortnite', 'steam', 'xbox', 'playstation'] },
-      { subreddit: 'wholesomememes', words: ['hug', 'cute', 'wholesome', 'happy', 'love', 'friend'] },
-      { subreddit: 'schoolmemes', words: ['school', 'homework', 'exam', 'class', 'teacher', 'college'] },
-      { subreddit: 'workmemes', words: ['work', 'job', 'boss', 'office', 'shift'] }
+      { subreddit: 'catmemes', words: ['cat', 'kitty', 'kitten', 'meow', 'feline'] },
+      { subreddit: 'dogmemes', words: ['dog', 'puppy', 'pup', 'woof', 'canine'] },
+      { subreddit: 'animemes', words: ['anime', 'manga', 'waifu', 'otaku', 'naruto', 'one piece', 'dragon ball'] },
+      { subreddit: 'ProgrammerHumor', words: ['code', 'coding', 'program', 'programming', 'developer', 'bug', 'javascript', 'typescript', 'python', 'java', 'software', 'api', 'database'] },
+      { subreddit: 'gamingmemes', words: ['game', 'gaming', 'gamer', 'minecraft', 'valorant', 'fortnite', 'steam', 'xbox', 'playstation', 'nintendo', 'ps5', 'xbox series'] },
+      { subreddit: 'wholesomememes', words: ['hug', 'cute', 'wholesome', 'happy', 'love', 'friend', ' wholesome', ' wholesome meme'] },
+      { subreddit: 'schoolmemes', words: ['school', 'homework', 'exam', 'class', 'teacher', 'college', 'university', 'student', 'study'] },
+      { subreddit: 'workmemes', words: ['work', 'job', 'boss', 'office', 'shift', 'coworker', 'meeting', 'corporate'] },
+      { subreddit: 'Minecraft', words: ['minecraft', 'creeper', 'steve', 'block', 'craft'] },
+      { subreddit: 'Fortnite', words: ['fortnite', 'battle royale', 'victory royale', 'epic games'] },
+      { subreddit: 'Valorant', words: ['valorant', 'agent', 'riot games', 'ranked'] },
+      { subreddit: 'sports', words: ['sport', 'football', 'basketball', 'soccer', 'baseball', 'hockey', 'tennis', 'athlete'] },
+      { subreddit: 'musicmemes', words: ['music', 'song', 'artist', 'band', 'concert', 'album', 'spotify', 'soundtrack'] },
+      { subreddit: 'moviememes', words: ['movie', 'film', 'cinema', 'actor', 'actress', 'director', 'hollywood', 'netflix'] },
+      { subreddit: 'PoliticalHumor', words: ['politics', 'political', 'government', 'election', 'congress', 'president', 'democrat', 'republican'] },
+      { subreddit: 'science', words: ['science', 'scientist', 'physics', 'chemistry', 'biology', 'research', 'experiment', 'laboratory'] },
+      { subreddit: 'mathmemes', words: ['math', 'mathematics', 'calculus', 'algebra', 'geometry', 'equation', 'formula'] },
+      { subreddit: 'historymemes', words: ['history', 'historical', 'ancient', 'medieval', 'war', 'empire', 'civilization'] },
+      { subreddit: 'foodmemes', words: ['food', 'cooking', 'recipe', 'chef', 'restaurant', 'eat', 'meal', 'dish'] },
+      { subreddit: 'fitness', words: ['fitness', 'gym', 'workout', 'exercise', 'muscle', 'protein', 'cardio', 'lifting'] },
+      { subreddit: 'cars', words: ['car', 'vehicle', 'drive', 'driver', 'automotive', 'racing', 'speed', 'engine'] },
+      { subreddit: 'tech', words: ['technology', 'tech', 'phone', 'smartphone', 'computer', 'laptop', 'internet', 'app', 'software'] },
+      { subreddit: 'CryptoCurrency', words: ['crypto', 'cryptocurrency', 'bitcoin', 'ethereum', 'blockchain', 'trading', 'invest'] },
+      { subreddit: 'dankmemes', words: ['dank', 'edgy', 'dark humor', 'offensive'] }
     ];
 
     for (const topic of topicMap) {
@@ -280,8 +371,11 @@ export class MemeService {
       }
     }
 
-    candidates.push('memes');
-    candidates.push('dankmemes');
+    // Only add generic meme subreddits if no specific topics were found
+    if (candidates.length === 0) {
+      candidates.push('memes');
+      candidates.push('dankmemes');
+    }
 
     return [...new Set(candidates)];
   }
