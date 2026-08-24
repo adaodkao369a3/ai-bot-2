@@ -18,12 +18,12 @@ export const RATE_LIMIT_MAX_INTERACTIONS = 10;
 export const RATE_LIMIT_WINDOW_MS = 3 * 60 * 1000; // 3 minutes
 
 // Meme configuration
-// Idle-based meme drops instead of message-count based
+// Time-based meme drops every 15 minutes with reply detection
 export const MEME_API_URL = "https://meme-api.com/gimme";
 export const MEME_IDLE_ENABLED = true;
-export const MEME_IDLE_INACTIVITY_MINUTES = 3;
-export const MEME_IDLE_PROBABILITY = 0.35;
-export const MEME_IDLE_COOLDOWN_MINUTES = 15;
+export const MEME_IDLE_INACTIVITY_MINUTES = 0; // Not used in new system
+export const MEME_IDLE_PROBABILITY = 1.0; // Always drop when time is up
+export const MEME_IDLE_COOLDOWN_MINUTES = 15; // Fixed 15-minute intervals
 export const MEME_FETCH_TIMEOUT_MS = 5000;
 
 // Memory configuration

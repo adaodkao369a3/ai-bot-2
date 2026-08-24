@@ -118,11 +118,34 @@ export class MessageRouter {
         false
       );
 
-      // Update channel activity for idle meme tracking
+      // Update channel activity for meme scheduling
       memeService.updateChannelActivity(channelId);
 
       // Step 7: Extract actual message content (remove bot name/mention)
       const cleanContent = addressingService.extractContent(message, botUserId);
+
+      // Step 7.5: Security check for user input
+      const securityCheck = responseSanitizer.securityCheck(cleanContent);
+      if (!securityCheck.safe) {
+        logger.warn(`Security check failed for user ${userId}`, {
+          reason: securityCheck.reason,
+          content: cleanContent.substring(0, 100)
+        });
+        
+        // Respond playfully but don't comply
+        const securityMessages = [
+          'nice try bro',
+          'you\'re funny for asking that',
+          'nahhh not doing that',
+          'bro really thought that would work',
+          'you\'re gonna have to try harder than that'
+        ];
+        await message.reply({
+          content: securityMessages[Math.floor(Math.random() * securityMessages.length)],
+          allowedMentions: { parse: [], repliedUser: true, users: [userId] }
+        });
+        return;
+      }
 
       // Explicit "I am X / my name is X / call me X" statements are stored
       // immediately so identity survives restarts and new conversations.
@@ -131,7 +154,7 @@ export class MessageRouter {
         await memoryService.rememberIdentity(userId, guildId, identityName);
       }
 
-      // Step 8: Get or create user profile
+      // Step 9: Get or create user profile
       const userProfile = await memoryService.getOrCreateProfile(
         userId,
         guildId,
@@ -139,12 +162,12 @@ export class MessageRouter {
         globalDisplayName
       );
 
-      // Step 9: Update memory eligibility if we have member info
+      // Step 10: Update memory eligibility if we have member info
       if (member) {
         await memoryService.updateMemoryEligibility(userId, guildId, member);
       }
 
-      // Step 10: Update last interaction time
+      // Step 11: Update last interaction time
       await memoryService.updateLastInteraction(userId, guildId);
 
       // Use the freshly fetched Discord roles for this interaction rather
@@ -153,7 +176,7 @@ export class MessageRouter {
         ? permissionService.hasMemoryEligibility(member)
         : userProfile.memoryEligible;
 
-      // Step 11: Extract memory candidates if eligible (non-blocking)
+      // Step 12: Extract memory candidates if eligible (non-blocking)
       if (memoryEligible && await memoryService.isInActiveMemoryPool(userId, guildId)) {
         try {
           const conversationContext = conversationContextService.getFormattedContext(channelId);
@@ -176,7 +199,7 @@ export class MessageRouter {
         }
       }
 
-      // Step 12: Identity is always available to the user themselves.
+      // Step 13: Identity is always available to the user themselves.
       // Optional preference/interest memory remains role-gated.
       const identityMemories = await memoryService.getIdentityMemories(userId, guildId);
       let memoryContext = [
@@ -190,10 +213,10 @@ export class MessageRouter {
         memoryContext = [memoryContext, generalMemoryContext].filter(Boolean).join('\n');
       }
 
-      // Step 13: Get conversation context
+      // Step 14: Get conversation context
       const conversationContext = conversationContextService.getFormattedContext(channelId);
 
-      // Step 14: Explicit media requests are handled as one-shot actions.
+      // Step 15: Explicit media requests are handled as one-shot actions.
       // Do not also generate an AI reply or auto-drop a meme for the same text.
       const mediaHandled = await this.handleExplicitMediaRequest(
         message,
@@ -204,7 +227,7 @@ export class MessageRouter {
         return;
       }
 
-      // Step 15: Generate AI response
+      // Step 16: Generate AI response
       // Show the "Bot Kun is typing..." indicator in Discord while we work,
       // and keep refreshing it since a typing indicator only lasts ~10s.
       const stopTyping = this.startTypingIndicator(message);
@@ -221,7 +244,7 @@ export class MessageRouter {
         stopTyping();
       }
 
-      // Step 15: Handle AI response
+      // Step 17: Handle AI response
       if (aiResponse.success && aiResponse.content) {
         // Sanitize the response to prevent mention abuse and format leakage
         const sanitizedContent = responseSanitizer.sanitize(aiResponse.content);
@@ -249,7 +272,7 @@ export class MessageRouter {
         });
         logger.info(`Bot Kun responded to user ${userId} in guild ${guildId}`);
 
-        // Step 16: Check for idle meme drop (only after response, don't interrupt)
+        // Step 18: Check for scheduled meme drop (15-minute intervals)
         if (memeService.shouldDropIdleMeme(channelId)) {
           await this.dropMeme(message, conversationContext);
         }
@@ -324,15 +347,27 @@ export class MessageRouter {
       const category = this.extractMemeCategory(content);
       const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`, category);
       if (!meme) {
+        const messages = [
+          'nahhh couldn\'t find one',
+          'couldn\'t find anything good',
+          'no luck finding one',
+          'search failed, try again'
+        ];
         await message.reply({
-          content: 'nahhh couldn\'t find one 💀',
+          content: messages[Math.floor(Math.random() * messages.length)],
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
 
+      const successMessages = [
+        'found one',
+        'here you go',
+        'gotchu',
+        'pulling one up now'
+      ];
       await message.reply({
-        content: 'found one 💀',
+        content: successMessages[Math.floor(Math.random() * successMessages.length)],
         embeds: [
           new EmbedBuilder()
             .setImage(meme.imageUrl)
@@ -347,8 +382,14 @@ export class MessageRouter {
     if (gifAction) {
       const interactionResponse = await interactionPoolsService.getInteractionResponse(gifAction);
       if (!interactionResponse) {
+        const messages = [
+          `couldn't find a ${gifAction} gif right now`,
+          `no ${gifAction} gif found`,
+          `search failed for ${gifAction}`,
+          `can't find a ${gifAction} gif`
+        ];
         await message.reply({
-          content: `I couldn't find a ${gifAction} GIF right now.`,
+          content: messages[Math.floor(Math.random() * messages.length)],
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
@@ -377,8 +418,14 @@ export class MessageRouter {
     if (youtubeQuery) {
       const video = await mediaService.searchYoutube(youtubeQuery);
       if (!video) {
+        const messages = [
+          'nahhh couldn\'t find one',
+          'couldn\'t find that video',
+          'search came up empty',
+          'no results found'
+        ];
         await message.reply({
-          content: 'nahhh couldn\'t find one 💀',
+          content: messages[Math.floor(Math.random() * messages.length)],
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
@@ -386,8 +433,14 @@ export class MessageRouter {
 
       // IMPORTANT: use the watch URL as message content, not an EmbedBuilder
       // URL. Discord renders this as its native YouTube video player.
+      const successMessages = [
+        'found one',
+        'here you go',
+        'gotchu',
+        'pulling it up now'
+      ];
       await message.reply({
-        content: `found one 💀\nhttps://www.youtube.com/watch?v=${video.videoId}`,
+        content: `${successMessages[Math.floor(Math.random() * successMessages.length)]}\nhttps://www.youtube.com/watch?v=${video.videoId}`,
         allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
       return true;
@@ -470,8 +523,14 @@ export class MessageRouter {
         return;
       }
 
+      const dropMessages = [
+        'vibe check',
+        'random meme drop',
+        'here\'s something',
+        'meme time'
+      ];
       await message.reply({
-        content: 'vibe check 💀',
+        content: dropMessages[Math.floor(Math.random() * dropMessages.length)],
         embeds: [
           new EmbedBuilder()
             .setImage(meme.imageUrl)
@@ -565,7 +624,13 @@ export class MessageRouter {
 
     try {
       await botStateService.enable(message.guild.id);
-      await message.reply('Bot Kun is now awake. Let\'s go.');
+      const messages = [
+        'Bot Kun is now awake. Let\'s go.',
+        'I\'m awake now',
+        'bot is online',
+        'ready to talk'
+      ];
+      await message.reply(messages[Math.floor(Math.random() * messages.length)]);
       logger.info(`Bot enabled for guild ${message.guild.id} by ${message.author.id}`);
     } catch (error) {
       logger.error('Failed to enable bot', {
@@ -583,7 +648,13 @@ export class MessageRouter {
 
     try {
       await botStateService.disable(message.guild.id);
-      await message.reply('Bot Kun is going back to sleep. Peace.');
+      const messages = [
+        'Bot Kun is going back to sleep. Peace.',
+        'going back to sleep',
+        'bot is offline now',
+        'catch you later'
+      ];
+      await message.reply(messages[Math.floor(Math.random() * messages.length)]);
       logger.info(`Bot disabled for guild ${message.guild.id} by ${message.author.id}`);
     } catch (error) {
       logger.error('Failed to disable bot', {

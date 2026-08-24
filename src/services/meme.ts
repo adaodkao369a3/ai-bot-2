@@ -34,13 +34,17 @@ export interface Meme {
 interface ChannelIdleState {
   lastMessageTime: number;
   lastMemeDropTime: number;
+  lastMemeReplyTime: number;
+  awaitingReply: boolean;
 }
 
 export class MemeService {
   private channelStates: Map<string, ChannelIdleState> = new Map();
 
   /**
-   * Check if a meme should be dropped based on idle time
+   * Check if a meme should be dropped based on the new scheduling system
+   * - Drop a meme every 15 minutes if the channel is active
+   * - If no reply to the last meme, stop dropping until someone talks again
    */
   shouldDropIdleMeme(channelId: string): boolean {
     if (!MEME_IDLE_ENABLED) {
@@ -54,30 +58,57 @@ export class MemeService {
       return false;
     }
 
-    const inactiveMs = now - state.lastMessageTime;
-    const inactiveMinutes = inactiveMs / (60 * 1000);
-    const cooldownMs = MEME_IDLE_COOLDOWN_MINUTES * 60 * 1000;
+    const fifteenMinutes = 15 * 60 * 1000;
+    const thirtyMinutes = 30 * 60 * 1000;
     const timeSinceLastMeme = now - state.lastMemeDropTime;
 
-    // Check if inactive long enough and cooldown has passed
-    if (inactiveMinutes >= MEME_IDLE_INACTIVITY_MINUTES && timeSinceLastMeme >= cooldownMs) {
-      // Random chance to drop
-      return Math.random() < MEME_IDLE_PROBABILITY;
+    // If we're waiting for a reply, don't drop more memes
+    if (state.awaitingReply) {
+      // If it's been more than 30 minutes with no reply, reset the state
+      // This handles the case where a channel becomes completely inactive
+      if (timeSinceLastMeme > thirtyMinutes) {
+        state.awaitingReply = false;
+        this.channelStates.set(channelId, state);
+        return false;
+      }
+      return false;
+    }
+
+    // If we're not waiting for a reply and 15 minutes have passed, drop another one
+    if (timeSinceLastMeme >= fifteenMinutes) {
+      return true;
     }
 
     return false;
   }
 
   /**
-   * Update channel activity state
+   * Update channel activity state and mark that we got a reply
    */
   updateChannelActivity(channelId: string): void {
     const state = this.channelStates.get(channelId) || {
       lastMessageTime: Date.now(),
-      lastMemeDropTime: 0
+      lastMemeDropTime: 0,
+      lastMemeReplyTime: 0,
+      awaitingReply: false
     };
     state.lastMessageTime = Date.now();
+    state.awaitingReply = false; // We got a reply, so we can drop memes again
     this.channelStates.set(channelId, state);
+  }
+
+  /**
+   * Initialize channel state for the scheduler
+   */
+  initializeChannel(channelId: string): void {
+    if (!this.channelStates.has(channelId)) {
+      this.channelStates.set(channelId, {
+        lastMessageTime: Date.now(),
+        lastMemeDropTime: 0,
+        lastMemeReplyTime: 0,
+        awaitingReply: false
+      });
+    }
   }
 
   /**
@@ -87,6 +118,7 @@ export class MemeService {
     const state = this.channelStates.get(channelId);
     if (state) {
       state.lastMemeDropTime = Date.now();
+      state.awaitingReply = true; // Now we wait for a reply
       this.channelStates.set(channelId, state);
     }
   }

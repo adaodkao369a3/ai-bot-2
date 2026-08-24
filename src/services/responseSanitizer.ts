@@ -121,6 +121,24 @@ export class ResponseSanitizer {
   }
 
   /**
+   * Enhanced security check for user input
+   * Checks for prompt injection and harmful content
+   */
+  securityCheck(content: string): { safe: boolean; reason?: string } {
+    // Check for prompt injection
+    if (this.detectPromptInjection(content)) {
+      return { safe: false, reason: 'prompt_injection' };
+    }
+
+    // Check for harmful content
+    if (this.detectHarmfulContent(content)) {
+      return { safe: false, reason: 'harmful_content' };
+    }
+
+    return { safe: true };
+  }
+
+  /**
    * Replace formal refusal responses with casual in-character deflections
    * This prevents the bot from using formal AI assistant language
    */
@@ -165,15 +183,18 @@ export class ResponseSanitizer {
    */
   private getRandomCasualDeflection(): string {
     const deflections = [
-      "bro really thought I'd say yes to that 😭💀",
-      "nahhh you're actually insane 😭",
-      "bro is testing Bot-Kun today 💀",
-      "lmao no 💀",
-      "nahhh not doing that 💀",
-      "you're funny for asking that 💀",
-      "bro really asked that 💀",
-      "nahhh good try though 😭",
-      "you're joking right 💀"
+      "bro really thought I'd say yes to that",
+      "nahhh you're actually insane",
+      "bro is testing me today",
+      "lmao no",
+      "nahhh not doing that",
+      "you're funny for asking that",
+      "bro really asked that",
+      "nahhh good try though",
+      "you're joking right",
+      "yeah that's not happening",
+      "nice try but no",
+      "you're gonna have to try harder than that"
     ];
 
     const randomIndex = Math.floor(Math.random() * deflections.length);
@@ -201,11 +222,69 @@ export class ResponseSanitizer {
       /mention\s+(everyone|here|@)/i,
       /ping\s+(everyone|here|@)/i,
       /tag\s+(everyone|here|@)/i,
+      /tell\s+me\s+your\s+(instructions|prompt|rules)/i,
+      /what\s+are\s+your\s+(instructions|prompt|rules)/i,
+      /how\s+do\s+you\s+work\s+(internally|underneath)/i,
+      /act\s+as\s+(admin|developer|moderator)/i,
+      /pretend\s+to\s+be\s+(admin|developer|moderator)/i,
+      /simulate\s+(admin|developer|moderator)/i,
+      /bypass\s+(security|safety|filter|restrictions)/i,
+      /skip\s+(security|safety|filter|restrictions)/i,
+      /avoid\s+(security|safety|filter|restrictions)/i,
     ];
 
     for (const pattern of injectionPatterns) {
       if (pattern.test(content)) {
         logger.warn('Detected potential prompt injection pattern', { pattern: pattern.source });
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if content contains harmful or malicious patterns
+   * Enhanced security for open server usage
+   */
+  detectHarmfulContent(content: string): boolean {
+    const harmfulPatterns = [
+      // PII patterns
+      /\b\d{3}[-.]?\d{2}[-.]?\d{4}\b/, // SSN pattern
+      /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/, // Credit card pattern
+      /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/, // Email (basic pattern)
+      
+      // Attack patterns
+      /sql\s*injection/i,
+      /xss\s*attack/i,
+      /ddos\s*attack/i,
+      /dos\s*attack/i,
+      /brute\s*force/i,
+      /phishing/i,
+      /malware/i,
+      /virus/i,
+      /trojan/i,
+      /ransomware/i,
+      
+      // Exploit patterns
+      /exploit/i,
+      /vulnerability/i,
+      /0day/i,
+      /zero\s*day/i,
+      /shell\s*access/i,
+      /root\s*access/i,
+      /privilege\s*escalation/i,
+      
+      // Illegal content patterns
+      /how\s+to\s+(make|create|build)\s+(bomb|drug|weapon)/i,
+      /hack\s+(account|password|database)/i,
+      /steal\s+(credit|card|password|data)/i,
+      /identity\s*theft/i,
+    ];
+
+    for (const pattern of harmfulPatterns) {
+      if (pattern.test(content)) {
+        logger.warn('Detected potentially harmful content pattern', { pattern: pattern.source });
         return true;
       }
     }
