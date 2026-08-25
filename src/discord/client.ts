@@ -3,7 +3,7 @@
  * Creates Discord client with appropriate intents for planned functionality
  */
 
-import { Client, GatewayIntentBits } from 'discord.js';
+import { Client, GatewayIntentBits, ActivityType } from 'discord.js';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
 
@@ -22,11 +22,16 @@ export function createDiscordClient(): Client {
   });
 
   // Set up event handlers for connection lifecycle
-  client.once('ready', () => {
+  client.once('ready', async () => {
     logger.info('Discord client ready', {
       username: client.user?.tag,
       guilds: client.guilds.cache.size
     });
+    
+    // Set bot status to describe what it does
+    if (client.user) {
+      await client.user.setActivity('AI conversations with memory', { type: ActivityType.Watching });
+    }
   });
 
   // Handle incoming messages
