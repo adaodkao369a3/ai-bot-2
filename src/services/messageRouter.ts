@@ -272,7 +272,10 @@ export class MessageRouter {
         });
         logger.info(`Bot Kun responded to user ${userId} in guild ${guildId}`);
 
-        // Step 18: Check for scheduled meme drop (15-minute intervals)
+        // Step 18: Handle media replies (3 out of 6 times probability)
+        await this.handleMediaReply(message, conversationContext);
+
+        // Step 19: Check for scheduled meme drop (7-minute intervals)
         if (memeService.shouldDropIdleMeme(channelId)) {
           await this.dropMeme(message, conversationContext);
         }
@@ -515,6 +518,89 @@ export class MessageRouter {
       .trim();
 
     return query || null;
+  }
+
+  /**
+   * Handle media replies with probability (3 out of 6 times)
+   * - Text to text: normal AI response (already handled)
+   * - Meme/GIF to meme/GIF: respond with randomized media 50% of the time
+   * - Never reply with the same media the user sent
+   * - Only reply in the same channel
+   */
+  private async handleMediaReply(message: Message, conversationContext: string): Promise<void> {
+    // Check if user sent media (image/gif/video)
+    const hasAttachments = message.attachments.size > 0;
+    const hasEmbeds = message.embeds.length > 0;
+    
+    if (!hasAttachments && !hasEmbeds) {
+      return; // User didn't send media, no media reply needed
+    }
+
+    // 3 out of 6 times probability (50%)
+    const shouldReplyWithMedia = Math.random() < 0.5;
+    if (!shouldReplyWithMedia) {
+      return;
+    }
+
+    // Determine what type of media to send back
+    // If user sent image/gif, send back a meme or gif
+    // Never send the same media the user sent
+    const mediaType = Math.random() < 0.5 ? 'meme' : 'gif';
+    
+    try {
+      if (mediaType === 'meme') {
+        const meme = await memeService.fetchMeme(conversationContext);
+        if (meme) {
+          const replyMessages = [
+            'here',
+            'this one',
+            'found this',
+            'have this'
+          ];
+          await message.reply({
+            content: replyMessages[Math.floor(Math.random() * replyMessages.length)],
+            embeds: [
+              new EmbedBuilder()
+                .setImage(meme.imageUrl)
+                .setColor(0xFFA500)
+            ],
+            allowedMentions: {
+              parse: [],
+              repliedUser: true,
+              users: [message.author.id]
+            }
+          });
+        }
+      } else {
+        // Send a GIF based on conversation context
+        const gif = await mediaService.searchGif(conversationContext.split(' ').slice(-5).join(' '));
+        if (gif) {
+          const replyMessages = [
+            'here',
+            'this one',
+            'found this',
+            'have this'
+          ];
+          await message.reply({
+            content: replyMessages[Math.floor(Math.random() * replyMessages.length)],
+            embeds: [
+              new EmbedBuilder()
+                .setImage(gif.url)
+                .setColor(0x9B59B6)
+            ],
+            allowedMentions: {
+              parse: [],
+              repliedUser: true,
+              users: [message.author.id]
+            }
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to send media reply', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   /**

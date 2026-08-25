@@ -35,6 +35,7 @@ interface ChannelIdleState {
   lastMessageTime: number;
   lastMemeDropTime: number;
   lastMemeReplyTime: number;
+  conversationStartTime: number;
   awaitingReply: boolean;
 }
 
@@ -43,9 +44,10 @@ export class MemeService {
 
   /**
    * Check if a meme should be dropped based on the new scheduling system
-   * - Drop a meme every 15 minutes if the channel is active
+   * - Drop a meme every 7 minutes if the channel is active
    * - If no reply to the last meme, stop dropping until someone talks again
    * - Only works for channels that have recent activity
+   * - Only drop memes after 7 minutes of conversation has passed
    */
   shouldDropIdleMeme(channelId: string): boolean {
     if (!MEME_IDLE_ENABLED) {
@@ -60,13 +62,19 @@ export class MemeService {
       return false;
     }
 
-    const fifteenMinutes = 15 * 60 * 1000;
+    const sevenMinutes = 7 * 60 * 1000;
     const thirtyMinutes = 30 * 60 * 1000;
     const timeSinceLastMeme = now - state.lastMemeDropTime;
     const timeSinceLastMessage = now - state.lastMessageTime;
+    const timeSinceConversationStart = now - state.conversationStartTime;
 
     // If no messages in the last hour, don't drop memes (channel is inactive)
     if (timeSinceLastMessage > 60 * 60 * 1000) {
+      return false;
+    }
+
+    // Don't drop memes in the first 7 minutes of conversation
+    if (timeSinceConversationStart < sevenMinutes) {
       return false;
     }
 
@@ -82,8 +90,8 @@ export class MemeService {
       return false;
     }
 
-    // If we're not waiting for a reply and 15 minutes have passed, drop another one
-    if (timeSinceLastMeme >= fifteenMinutes) {
+    // If we're not waiting for a reply and 7 minutes have passed, drop another one
+    if (timeSinceLastMeme >= sevenMinutes) {
       return true;
     }
 
@@ -98,6 +106,7 @@ export class MemeService {
       lastMessageTime: Date.now(),
       lastMemeDropTime: 0,
       lastMemeReplyTime: 0,
+      conversationStartTime: Date.now(),
       awaitingReply: false
     };
     state.lastMessageTime = Date.now();
