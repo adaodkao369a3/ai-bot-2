@@ -665,8 +665,30 @@ export class MessageRouter {
     const parts = content.split(' ');
     const command = parts[0].toLowerCase();
 
+    // Check if user is staff for admin commands
+    let member: GuildMember | null = null;
+    try {
+      member = await message.guild?.members.fetch(message.author.id);
+    } catch (error) {
+      logger.warn('Failed to fetch guild member for command', { 
+        userId: message.author.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    const isStaff = member ? permissionService.isStaff(member) : false;
+
     switch (command) {
       case '~bot':
+        // Only staff can use ~bot on/off
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+        
         if (parts[1] === 'on') {
           await this.handleBotOn(message);
         } else if (parts[1] === 'off') {
@@ -675,6 +697,15 @@ export class MessageRouter {
         break;
 
       case '~bl':
+        // Only staff can use blacklist commands
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+        
         if (parts[1]) {
           // Extract user ID from mention
           const userIdMatch = parts[1].match(/<@!?(\d+)>/);
@@ -688,6 +719,15 @@ export class MessageRouter {
         break;
 
       case '~unbl':
+        // Only staff can use blacklist commands
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+        
         if (parts[1]) {
           // Extract user ID from mention
           const userIdMatch = parts[1].match(/<@!?(\d+)>/);
@@ -698,6 +738,15 @@ export class MessageRouter {
         break;
 
       case '~guide':
+        // Only staff can use guide command
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+        
         await this.handleGuide(message);
         break;
 
