@@ -1,5 +1,5 @@
 /**
- * Health and readiness tracking for Bot Kun v2
+ * Health and readiness tracking for Bocchi
  * Provides internal readiness mechanism for monitoring
  */
 
@@ -38,7 +38,7 @@ class HealthTracker {
 
   private checkFullReadiness(): void {
     if (this.isFullyReady()) {
-      logger.info('Bot Kun is fully ready');
+      logger.info('Bocchi is fully ready');
     }
   }
 

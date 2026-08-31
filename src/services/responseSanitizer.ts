@@ -1,5 +1,5 @@
 /**
- * Response sanitizer for Bot Kun v2
+ * Response sanitizer for Bocchi
  * Provides security layers to prevent malicious Discord mentions and response format issues
  */
 
@@ -17,7 +17,7 @@ export class ResponseSanitizer {
     sanitized = sanitized.replace(/@everyone/g, '@​everyone'); // Zero-width space to break mention
     sanitized = sanitized.replace(/@here/g, '@​here');
 
-    // Keep user mentions so Bot Kun can naturally refer to people in conversation.
+    // Keep user mentions so Bocchi can naturally refer to people in conversation.
     // The router controls which mentions Discord is actually allowed to notify.
     sanitized = sanitized.replace(/<@!?(\d+)>/g, (match, userId) => {
       logger.debug('Preserving user mention in AI response', { userId });

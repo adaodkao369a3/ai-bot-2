@@ -1,5 +1,5 @@
 /**
- * PostgreSQL connection pool for Bot Kun v2
+ * PostgreSQL connection pool for Bocchi
  *
  * Connects directly to Supabase-hosted PostgreSQL using the `pg` driver
  * against SUPABASE_DATABASE_URL. This replaces the earlier @supabase/supabase-js

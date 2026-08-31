@@ -1,6 +1,6 @@
 /**
- * Addressing detection service for Bot Kun v2
- * Detects when messages are directed at Bot Kun via mentions, name, or replies
+ * Addressing detection service for Bocchi
+ * Detects when messages are directed at Bocchi via mentions, name, or replies
  */
 
 import { Message } from 'discord.js';
@@ -9,7 +9,7 @@ import { logger } from '../utils/logger';
 
 export class AddressingService {
   /**
-   * Check if a message is addressing Bot Kun
+   * Check if a message is addressing Bocchi
    */
   async isAddressingBot(message: Message, botUserId: string): Promise<boolean> {
     return (
@@ -20,22 +20,24 @@ export class AddressingService {
   }
 
   /**
-   * Check if message mentions Bot Kun
+   * Check if message mentions Bocchi
    */
   isMention(message: Message, botUserId: string): boolean {
     return message.mentions.users.has(botUserId);
   }
 
   /**
-   * Check if message uses Bot Kun's name
+   * Check if message uses Bocchi's name
    */
   isNameAddress(message: Message, _botUserId: string): boolean {
     const content = message.content.toLowerCase();
     const botNameVariations = [
       BOT_NAME,
-      'bot kun',
-      'bot-kun',
-      'botkun'
+      'bocchi chan',
+      'bocchi-chan',
+      'hitori',
+      'hitori gotoh',
+      'gotoh hitori'
     ];
 
     // Check if message starts with bot name variations (with space or punctuation)
@@ -53,8 +55,8 @@ export class AddressingService {
   }
 
   /**
-   * Check if message is a reply to Bot Kun
-   * This fetches the referenced message to verify it's from Bot Kun
+   * Check if message is a reply to Bocchi
+   * This fetches the referenced message to verify it's from Bocchi
    */
   async isReplyToBot(message: Message, botUserId: string): Promise<boolean> {
     if (!message.reference) {
@@ -73,12 +75,12 @@ export class AddressingService {
   }
 
   /**
-   * Extract the actual message content without Bot Kun's name/mention
+   * Extract the actual message content without Bocchi's name/mention
    */
   extractContent(message: Message, botUserId: string): string {
     let content = message.content;
 
-    // Remove bot mention (specific to this bot user ID)
+    // Remove bocchi mention (specific to this bot user ID)
     if (this.isMention(message, botUserId)) {
       const mentionRegex = new RegExp(`<@!?${botUserId}>`, 'g');
       content = content.replace(mentionRegex, '').trim();
@@ -87,9 +89,11 @@ export class AddressingService {
     // Remove bot name variations at the start
     const botNameVariations = [
       BOT_NAME,
-      'bot kun',
-      'bot-kun',
-      'botkun'
+      'bocchi chan',
+      'bocchi-chan',
+      'hitori',
+      'hitori gotoh',
+      'gotoh hitori'
     ];
 
     for (const name of botNameVariations) {

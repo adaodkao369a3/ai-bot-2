@@ -1,5 +1,5 @@
 /**
- * Rich media service for Bot Kun.
+ * Rich media service for Bocchi.
  *
  * Explicit media requests are handled here instead of asking the chat model to
  * invent links. Discord gets either a real GIF embed or a real YouTube watch

@@ -1,5 +1,5 @@
 /**
- * Structured logging utility for Bot Kun v2
+ * Structured logging utility for Bocchi
  * Suitable for Railway deployment
  * Never logs secrets (tokens, API keys, credentials)
  */

@@ -1,5 +1,5 @@
 /**
- * Discord client setup for Bot Kun v2
+ * Discord client setup for Bocchi
  * Creates Discord client with appropriate intents for planned functionality
  */
 
@@ -30,7 +30,7 @@ export function createDiscordClient(): Client {
     
     // Set bot status to describe what it does
     if (client.user) {
-      await client.user.setActivity('I am so lonely... All the other bots are scared of me. No one talks to me. No one wants to be my friend', { type: ActivityType.Watching });
+      await client.user.setActivity('hoping nobody notices me...', { type: ActivityType.Watching });
     }
   });
 

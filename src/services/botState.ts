@@ -1,5 +1,5 @@
 /**
- * Bot state management for Bot Kun v2
+ * Bot state management for Bocchi
  * Handles global enabled/disabled state with PostgreSQL persistence
  */
 

@@ -1,5 +1,5 @@
 /**
- * Blacklist service for Bot Kun v2
+ * Blacklist service for Bocchi
  * Manages user blacklisting with PostgreSQL persistence
  */
 

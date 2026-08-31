@@ -1,5 +1,5 @@
 /**
- * Meme service for Bot Kun.
+ * Meme service for Bocchi.
  * Fetches real memes from the meme API with validation and fallback.
  * Supports idle-based meme drops and explicit meme requests.
  */

@@ -1,5 +1,5 @@
 /**
- * Conversation context service for Bot Kun v2
+ * Conversation context service for Bocchi
  * Maintains bounded recent message history for AI context
  */
 
@@ -141,7 +141,7 @@ export class ConversationContextService {
 
     return messages
       .map(msg => {
-        const sender = msg.isBot ? 'Bot Kun' : msg.username;
+        const sender = msg.isBot ? 'Bocchi' : msg.username;
         return `${sender}: ${msg.content}`;
       })
       .join('\n');

@@ -1,5 +1,5 @@
 /**
- * Main entry point for Bot Kun v2
+ * Main entry point for Bocchi
  * Phase 2: Core brain and persistence implementation
  */
 
@@ -22,8 +22,8 @@ async function main(): Promise<void> {
   let memeCheckInterval: NodeJS.Timeout | null = null;
 
   try {
-    // Step 1: Bot Kun is starting
-    logger.info(`${BOT_NAME} v2 Phase 2 starting...`);
+    // Step 1: Bocchi is starting
+    logger.info(`${BOT_NAME} Phase 2 starting...`);
 
     // Step 2: Configuration loaded (validated by env.ts)
     logger.info('Configuration loaded successfully');
@@ -63,10 +63,10 @@ async function main(): Promise<void> {
     }
 
     // Step 5: Initialize services with database-backed data
-    logger.info('Initializing Bot Kun services...');
+    logger.info('Initializing Bocchi services...');
     await botStateService.initialize();
     await blacklistService.initialize();
-    logger.info('Bot Kun services initialized successfully');
+    logger.info('Bocchi services initialized successfully');
 
     // Step 6: Initialize Discord connection
     discordClient = createDiscordClient();
@@ -88,17 +88,17 @@ async function main(): Promise<void> {
       logger.info('Meme scheduler started (15-minute intervals with reply detection)');
     }
 
-    // Step 8: Bot Kun is ready
+    // Step 8: Bocchi is ready
     healthTracker.setInitialized(true);
     logger.info(`${BOT_NAME} is ready`, {
       status: healthTracker.getReadinessReport()
     });
 
     // Keep the process running
-    logger.info('Bot Kun is running. Press Ctrl+C to stop.');
+    logger.info('Bocchi is running. Press Ctrl+C to stop.');
 
   } catch (error) {
-    logger.error('Failed to start Bot Kun', { 
+    logger.error('Failed to start Bocchi', { 
       error: error instanceof Error ? error.message : String(error) 
     });
     process.exit(1);

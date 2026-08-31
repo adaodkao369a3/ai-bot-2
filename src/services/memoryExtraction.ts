@@ -1,5 +1,5 @@
 /**
- * Memory extraction service for Bot Kun v2
+ * Memory extraction service for Bocchi
  * Extracts candidate memories from user messages using AI
  * Implements filtering, normalization, and sensitive information safeguards
  */
@@ -228,7 +228,7 @@ export class MemoryExtractionService {
    * Build the system prompt for AI memory extraction
    */
   private buildExtractionPrompt(userName: string, conversationContext?: string): string {
-    let prompt = `You are a memory extraction assistant for Bot Kun. Your task is to identify stable, long-term information about users from their messages.
+    let prompt = `You are a memory extraction assistant for Bocchi. Your task is to identify stable, long-term information about users from their messages.
 
 IMPORTANT RULES:
 1. Only extract information that is likely to be stable (preferences, interests, hobbies, habits, identity facts)

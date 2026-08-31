@@ -1,5 +1,5 @@
 /**
- * Message routing pipeline for Bot Kun v2
+ * Message routing pipeline for Bocchi
  * Central message handling pipeline that coordinates all services
  */
 
@@ -69,7 +69,7 @@ export class MessageRouter {
 
       const isStaff = member ? permissionService.isStaff(member) : false;
 
-      // Step 1: Check if Bot Kun is enabled for this guild.
+      // Step 1: Check if Bocchi is enabled for this guild.
       // Staff/admins bypass this gate.
       const botEnabled = await botStateService.isEnabled(guildId);
       if (!botEnabled && !isStaff) {
@@ -85,7 +85,7 @@ export class MessageRouter {
         return;
       }
 
-      // Step 3: Check if message is addressing Bot Kun
+      // Step 3: Check if message is addressing Bocchi
       const isAddressing = await addressingService.isAddressingBot(message, botUserId);
       if (!isAddressing) {
         return;
@@ -228,7 +228,7 @@ export class MessageRouter {
       }
 
       // Step 16: Generate AI response
-      // Show the "Bot Kun is typing..." indicator in Discord while we work,
+      // Show the "Bocchi is typing..." indicator in Discord while we work,
       // and keep refreshing it since a typing indicator only lasts ~10s.
       const stopTyping = this.startTypingIndicator(message);
       let aiResponse;
@@ -252,11 +252,11 @@ export class MessageRouter {
         // Add to response memory to avoid repetition
         responseMemoryService.addResponse(sanitizedContent);
 
-        // Add Bot Kun's response to conversation context (use sanitized version)
+        // Add Bocchi's response to conversation context (use sanitized version)
         conversationContextService.addMessage(
           channelId,
           botUserId,
-          'Bot Kun',
+          'Bocchi',
           sanitizedContent,
           true
         );
@@ -270,7 +270,7 @@ export class MessageRouter {
             users: [userId]
           }
         });
-        logger.info(`Bot Kun responded to user ${userId} in guild ${guildId}`);
+        logger.info(`Bocchi responded to user ${userId} in guild ${guildId}`);
 
         // Step 18: Handle media replies (3 out of 6 times probability)
         await this.handleMediaReply(message, conversationContext);
@@ -310,7 +310,7 @@ export class MessageRouter {
   }
 
   /**
-   * Start sending the "Bot Kun is typing..." indicator in the channel and
+   * Start sending the "Bocchi is typing..." indicator in the channel and
    * keep refreshing it (Discord's typing indicator only lasts ~10s) until
    * the returned function is called to stop.
    */
@@ -668,7 +668,7 @@ export class MessageRouter {
     // Check if user is staff for admin commands
     let member: GuildMember | null = null;
     try {
-      member = await message.guild?.members.fetch(message.author.id);
+      member = message.guild ? await message.guild.members.fetch(message.author.id) : null;
     } catch (error) {
       logger.warn('Failed to fetch guild member for command', { 
         userId: message.author.id,
@@ -765,10 +765,10 @@ export class MessageRouter {
     try {
       await botStateService.enable(message.guild.id);
       const messages = [
-        'Bot Kun is now awake. Let\'s go.',
-        'I\'m awake now',
-        'bot is online',
-        'ready to talk'
+        'i\'m online now...',
+        'ready... i guess...',
+        'online...',
+        'here...'
       ];
       await message.reply(messages[Math.floor(Math.random() * messages.length)]);
       logger.info(`Bot enabled for guild ${message.guild.id} by ${message.author.id}`);
@@ -776,7 +776,7 @@ export class MessageRouter {
       logger.error('Failed to enable bot', {
         error: error instanceof Error ? error.message : String(error)
       });
-      await message.reply('Failed to wake up Bot Kun. Try again later.');
+      await message.reply('failed to start... sorry...');
     }
   }
 
@@ -789,10 +789,10 @@ export class MessageRouter {
     try {
       await botStateService.disable(message.guild.id);
       const messages = [
-        'Bot Kun is going back to sleep. Peace.',
-        'going back to sleep',
-        'bot is offline now',
-        'catch you later'
+        'going offline now...',
+        'bye...',
+        'taking a break...',
+        'see you...'
       ];
       await message.reply(messages[Math.floor(Math.random() * messages.length)]);
       logger.info(`Bot disabled for guild ${message.guild.id} by ${message.author.id}`);
@@ -800,7 +800,7 @@ export class MessageRouter {
       logger.error('Failed to disable bot', {
         error: error instanceof Error ? error.message : String(error)
       });
-      await message.reply('Failed to put Bot Kun to sleep. Try again later.');
+      await message.reply('failed to stop... sorry...');
     }
   }
 
@@ -940,42 +940,42 @@ export class MessageRouter {
       // Create the guide embed
       const guideEmbed = new EmbedBuilder()
         .setColor(0x9B59B6)
-        .setTitle('<:botkun_smile:1529443061581611120> Bot-Kun\'s Little Guide <:botkun_love:1530299136664928377>')
-        .setDescription('<:botkun_think:1535318883077066752> So... who is Bot-Kun?\n\nBot-Kun is your chaotic little Discord companion who likes to yap, throw memes at people, find random videos, and occasionally question why you decided to talk to him in the first place <:chungussmirk:1529450300493140018>\n\nHe\'s here to chat, mess around, react to things, and generally make the server a little less boring.\n\n<:catgoodjob:1529429232038711546> You don\'t really need complicated commands either. Just talk to him normally.')
+        .setTitle('Bocchi\'s Little Guide')
+        .setDescription('So... who is Bocchi?\n\nBocchi is a socially anxious Discord presence who somehow ended up here and now has to talk to people. She\'s awkward, overthinks everything, but tries her best.\n\nShe\'s here to chat, share memes, find videos, and generally try to be social despite the overwhelming anxiety.\n\nYou don\'t really need complicated commands. Just talk to her normally.')
         .addFields(
           {
-            name: '<:botkun_smile:1529443061581611120> Talk to Bot-Kun',
-            value: 'Mention him or just say Bot-Kun and start talking.\n\n```\nBot-Kun what\'s up?\n@Bot-Kun tell me something funny\nBot-Kun do you like cats?\n```\n\nHe\'ll figure it out. Probably. <:botkun_think:1535318883077066752>',
+            name: 'Talk to Bocchi',
+            value: 'Mention her or just say Bocchi and start talking.\n\n```\nBocchi what\'s up?\n@Bocchi tell me something\nBocchi do you like cats?\n```\n\nShe\'ll try her best. Probably.',
             inline: false
           },
           {
-            name: '<:gaga:1536398360687157289> Memes',
-            value: 'Feeling like your day needs more brainrot?\n\nTry:\n\n```\nmeme\npull a meme\nshow me a meme\ncat meme\nanime meme\ngaming meme\ncoding meme\nJoJo meme\n```\n\nAnd yes, you can get specific. <:catnoted:1529429237675589753>',
+            name: 'Memes',
+            value: 'Need a distraction?\n\nTry:\n\n```\nmeme\npull a meme\nshow me a meme\ncat meme\nanime meme\ngaming meme\ncoding meme\n```\n\nYou can be specific if you want.',
             inline: false
           },
           {
-            name: '<:flirt:1529429667126181958> GIF Reactions',
-            value: 'Want Bot-Kun to react?\n\n```\nhug me · kiss me · cuddle me\npat me · high five me · wave at me\npunch me · kick me · slap me\ncry · laugh · dance\n```\n\nAffection or violence.\nThe two pillars of Discord. <:smirk:1529450331371733003>',
+            name: 'GIF Reactions',
+            value: 'Want Bocchi to react?\n\n```\nhug me · kiss me · cuddle me\npat me · high five me · wave at me\npunch me · kick me · slap me\ncry · laugh · dance\n```\n\nShe might panic a bit, but she\'ll try.',
             inline: false
           },
           {
-            name: '<:surprised:1526979432605286420> Videos & YouTube',
-            value: 'Need something to watch?\n\n```\nplay [song]\nfind [song] on youtube\nshow me a video of [topic]\nget me some asmr\n```\n\nBot-Kun will go hunting for it. <:whoreknee:1536398365099819008>',
+            name: 'Videos & YouTube',
+            value: 'Need something to watch?\n\n```\nplay [song]\nfind [song] on youtube\nshow me a video of [topic]\nget me some asmr\n```\n\nShe\'ll search for it.',
             inline: false
           },
           {
-            name: '<:botkun_think:1535318883077066752> Memory',
-            value: 'You can tell Bot-Kun your name:\n\n```\nmy name is Alex\ncall me Alex\n```\n\nHe\'ll remember it for future conversations. <:catnoted:1529429237675589753>',
+            name: 'Memory',
+            value: 'You can tell Bocchi your name:\n\n```\nmy name is Alex\ncall me Alex\n```\n\nShe\'ll remember it for future conversations.',
             inline: false
           },
           {
-            name: '<:botkun_tired:1530298969123455166> And sometimes...',
-            value: 'If the channel gets quiet for a while, Bot-Kun might randomly appear with a meme.\n\nNobody asked.\nHe just felt like it. <:ttongue:1529450341643583588>',
+            name: 'And sometimes...',
+            value: 'If the channel gets quiet for a while, Bocchi might randomly appear with a meme.\n\nNobody asked.\nShe just felt like it.',
             inline: false
           },
           {
-            name: '<:catgoodjob:1529429232038711546> That\'s basically it.',
-            value: 'Talk to him. Ask for memes. Get some GIFs. Find a video. Cause problems.\n\nBot-Kun will be around. <:botkun_love:1530299136664928377>',
+            name: 'That\'s basically it.',
+            value: 'Talk to her. Ask for memes. Get some GIFs. Find a video.\n\nBocchi will be around.',
             inline: false
           }
         );

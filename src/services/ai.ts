@@ -1,5 +1,5 @@
 /**
- * AI service abstraction for Bot Kun v2
+ * AI service abstraction for Bocchi
  * Provides clean interface for AI provider interactions
  * Currently implements Groq API
  */

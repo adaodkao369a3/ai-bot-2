@@ -1,5 +1,5 @@
 /**
- * Permission system for Bot Kun v2
+ * Permission system for Bocchi
  * Handles role-based feature access control
  */
 

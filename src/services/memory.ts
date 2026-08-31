@@ -1,5 +1,5 @@
 /**
- * Memory service for Bot Kun v2
+ * Memory service for Bocchi
  * Handles user profiles and long-term memory operations against PostgreSQL
  */
 

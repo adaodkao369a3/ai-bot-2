@@ -1,7 +1,7 @@
 {
-  "name": "bot-kun-2",
+  "name": "bocchi",
   "version": "1.0.0",
-  "description": "Bot Kun v2 - TypeScript Discord bot with Supabase integration",
+  "description": "Bocchi - TypeScript Discord bot with Supabase integration",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

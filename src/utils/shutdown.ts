@@ -1,5 +1,5 @@
 /**
- * Graceful shutdown handlers for Bot Kun v2
+ * Graceful shutdown handlers for Bocchi
  * Handles SIGINT and SIGTERM for clean shutdown, important for Railway
  */
 

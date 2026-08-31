@@ -1,5 +1,5 @@
 /**
- * Rate limiting service for Bot Kun v2
+ * Rate limiting service for Bocchi
  * Implements 10 interactions per user per 20 minutes
  * Uses bounded in-memory storage with automatic cleanup
  */
