@@ -213,6 +213,29 @@ export class MessageRouter {
       // Step 14: Get conversation context
       const conversationContext = conversationContextService.getFormattedContext(channelId);
 
+      // Step 14.5: Check if user is replying to another message and fetch reply context
+      let replyContext = '';
+      if (message.reference) {
+        try {
+          const referencedMessage = await message.fetchReference();
+          if (referencedMessage && referencedMessage.content) {
+            const originalAuthor = referencedMessage.author.globalName || referencedMessage.author.displayName;
+            replyContext = `Original message by ${originalAuthor}: "${referencedMessage.content}"`;
+            logger.debug('Fetched reply context', {
+              userId,
+              originalAuthor,
+              originalMessage: referencedMessage.content.substring(0, 50)
+            });
+          }
+        } catch (error) {
+          // If we can't fetch the referenced message, just continue without reply context
+          logger.debug('Failed to fetch referenced message for reply context', {
+            userId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
       // Step 15: Explicit media requests are handled as one-shot actions.
       // Do not also generate an AI reply or auto-drop a meme for the same text.
       const mediaHandled = await this.handleExplicitMediaRequest(
@@ -235,6 +258,7 @@ export class MessageRouter {
           userMessage: cleanContent,
           conversationContext,
           memoryContext,
+          replyContext,
           userName: globalDisplayName
         });
       } finally {
