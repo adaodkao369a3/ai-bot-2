@@ -1007,27 +1007,36 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       });
       
       let processed = 0;
-      let skipped = 0;
+      let skippedOwnerRole = 0;
+      let skippedBot = 0;
+      let skippedAlreadyHasNickname = 0;
+      let skippedHierarchy = 0;
       let failed = 0;
       let success = 0;
-      let skippedHierarchy = 0;
 
       await message.reply({
         content: 'processing all members without nicknames... this might take a while',
         allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
 
-      // Process members sequentially to avoid rate limit issues
+      // Process ALL members sequentially to avoid rate limit issues
       for (const [memberId, member] of members) {
+        // Skip owner role members FIRST (before any other checks)
+        if (nicknameService.hasOwnerRole(member)) {
+          skippedOwnerRole++;
+          logger.debug('Skipped member due to owner role', { userId: memberId });
+          continue;
+        }
+
         // Skip bots
         if (member.user.bot) {
-          skipped++;
+          skippedBot++;
           continue;
         }
 
         // Skip members who already have a nickname
         if (nicknameService.hasNickname(member)) {
-          skipped++;
+          skippedAlreadyHasNickname++;
           continue;
         }
 
@@ -1063,7 +1072,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
       }
 
-      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skipped} skipped, ${skippedHierarchy} skipped (role hierarchy)`;
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedOwnerRole} skipped (owner role), ${skippedBot} skipped (bot), ${skippedAlreadyHasNickname} skipped (has nickname), ${skippedHierarchy} skipped (role hierarchy)`;
       if (message.channel.isSendable()) {
         await message.channel.send({
           content: summary,
@@ -1072,10 +1081,13 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
 
       logger.info('Bulk nickname operation completed', {
+        totalMembers: members.size,
         processed,
         success,
         failed,
-        skipped,
+        skippedOwnerRole,
+        skippedBot,
+        skippedAlreadyHasNickname,
         skippedHierarchy,
         guildId: message.guild.id,
         requestedBy: message.author.id
@@ -1171,27 +1183,36 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
       
       let processed = 0;
-      let skipped = 0;
+      let skippedOwnerRole = 0;
+      let skippedBot = 0;
+      let skippedNoNickname = 0;
+      let skippedHierarchy = 0;
       let failed = 0;
       let success = 0;
-      let skippedHierarchy = 0;
 
       await message.reply({
         content: 'removing all server nicknames... this might take a while',
         allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
 
-      // Process members sequentially to avoid rate limit issues
+      // Process ALL members sequentially to avoid rate limit issues
       for (const [memberId, member] of members) {
+        // Skip owner role members FIRST (before any other checks)
+        if (nicknameService.hasOwnerRole(member)) {
+          skippedOwnerRole++;
+          logger.debug('Skipped member due to owner role', { userId: memberId });
+          continue;
+        }
+
         // Skip bots
         if (member.user.bot) {
-          skipped++;
+          skippedBot++;
           continue;
         }
 
         // Skip members who don't have a nickname
         if (!nicknameService.hasNickname(member)) {
-          skipped++;
+          skippedNoNickname++;
           continue;
         }
 
@@ -1219,7 +1240,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
       }
 
-      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skipped} skipped, ${skippedHierarchy} skipped (role hierarchy)`;
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedOwnerRole} skipped (owner role), ${skippedBot} skipped (bot), ${skippedNoNickname} skipped (no nickname), ${skippedHierarchy} skipped (role hierarchy)`;
       if (message.channel.isSendable()) {
         await message.channel.send({
           content: summary,
@@ -1228,10 +1249,13 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
 
       logger.info('Bulk nickname reset operation completed', {
+        totalMembers: members.size,
         processed,
         success,
         failed,
-        skipped,
+        skippedOwnerRole,
+        skippedBot,
+        skippedNoNickname,
         skippedHierarchy,
         guildId: message.guild.id,
         requestedBy: message.author.id

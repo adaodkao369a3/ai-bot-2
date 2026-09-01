@@ -58,17 +58,22 @@ export function createDiscordClient(): Client {
     // Hardcoded welcome channel ID (stage floor)
     const WELCOME_CHANNEL_ID = '1526872609717747762';
 
-    // Assign nickname if member doesn't already have one
+    // Assign nickname if member doesn't already have one and doesn't have owner role
     try {
       const nicknameService = getNicknameService();
       
-      if (!nicknameService.hasNickname(member)) {
+      if (!nicknameService.hasNickname(member) && !nicknameService.hasOwnerRole(member)) {
         logger.info('Assigning nickname to new member', {
           userId: member.id,
           username: member.user.tag
         });
         
         await nicknameService.generateAndAssignNickname(member);
+      } else if (nicknameService.hasOwnerRole(member)) {
+        logger.info('Skipped nickname assignment for owner role member', {
+          userId: member.id,
+          username: member.user.tag
+        });
       }
     } catch (error) {
       // Nickname assignment failure should not block the welcome message

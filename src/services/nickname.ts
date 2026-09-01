@@ -9,7 +9,8 @@ import {
   FIRST_WORDS,
   SECOND_WORDS,
   DISCORD_NICKNAME_MAX_LENGTH,
-  NICKNAME_MAX_GENERATION_ATTEMPTS
+  NICKNAME_MAX_GENERATION_ATTEMPTS,
+  OWNER_ROLE_ID
 } from '../config/nicknames';
 
 export class NicknameService {
@@ -167,6 +168,13 @@ export class NicknameService {
    */
   hasNickname(member: GuildMember): boolean {
     return member.nickname !== null;
+  }
+
+  /**
+   * Check if a member has the owner role and should be excluded from automatic operations
+   */
+  hasOwnerRole(member: GuildMember): boolean {
+    return member.roles.cache.has(OWNER_ROLE_ID);
   }
 
   /**
