@@ -26,10 +26,9 @@ export class NicknameService {
   /**
    * Generate a unique nickname for a member
    * Will retry until a unique nickname is found or max attempts reached
+   * Uses cached nickname set to avoid repeated Discord API calls
    */
-  async generateUniqueNickname(guild: Guild, excludeUserIds: string[] = []): Promise<string | null> {
-    const existingNicknames = await this.getExistingNicknames(guild);
-    
+  async generateUniqueNickname(existingNicknames: Set<string>): Promise<string | null> {
     for (let attempt = 1; attempt <= NICKNAME_MAX_GENERATION_ATTEMPTS; attempt++) {
       try {
         const candidate = await this.generateNicknameCandidate();
@@ -69,43 +68,28 @@ export class NicknameService {
 
   /**
    * Generate a single nickname candidate using AI
+   * Uses a small, dedicated request with low token limits
    */
   private async generateNicknameCandidate(): Promise<string | null> {
     const wordBankContext = this.buildWordBankContext();
     
-    const prompt = `You are a nickname generator for a Discord bot. Generate ONE short, funny Discord nickname inspired by current internet culture.
+    const prompt = `Generate ONE short, funny Discord nickname.
 
-The nickname should be:
-- Weird, absurd, stupid, edgy, or occasionally nonsensical
-- Meme-heavy and reference current internet culture
-- The kind of name that makes people go "what the fuck is that name"
-- NOT sanitized corporate names like "Friendly Gamer"
-- Short enough for Discord's 32-character limit
+Style: modern Discord/internet brainrot, memes, anime, gaming slang, viral phrases, absurd titles, stupid wordplay.
 
-You can use, combine, mutate, mash, or ignore these word banks as inspiration:
-
+Use these word banks as building blocks:
 ${wordBankContext}
 
-Examples of the style:
-- Dumguru
-- Gojo's Accountant
-- Chief Yapper
-- Captain Dih
-- Bocchi's Tax Auditor
-- Doomscroll Sensei
-- Lord Braincell
-- Yap Titan
-- Professor Bonk
-- Dumbfessor
-- Netflix Final Boss
+Examples: Captain Dih, Chief Yapper, Dumguru, Gojo's Accountant, Doomscroll Sensei, Bocchi's Tax Auditor, Lord Braincell, Yap Titan, Netflix Final Boss.
 
-Generate ONLY the nickname, nothing else. No quotes, no explanation, just the nickname text.`;
+Output ONLY the nickname. No quotes, no explanation. Max 32 characters.`;
 
     try {
       const response = await this.aiService.generateResponse({
-        systemPrompt: 'You are a creative nickname generator. Generate exactly one nickname per request.',
+        systemPrompt: 'Generate exactly one short Discord nickname per request.',
         userMessage: prompt,
-        userName: 'nickname-generator'
+        userName: 'nickname-generator',
+        maxTokens: 50 // Very low limit since we only need one short nickname
       });
 
       if (response.success && response.content) {
@@ -150,35 +134,36 @@ You can combine these like: Captain + Dih, Chief + Yapper, Professor + Bonk, Lor
   }
 
   /**
-   * Get all current nicknames in a guild
+   * Check if a nickname is already taken (case-insensitive)
    */
-  private async getExistingNicknames(guild: Guild): Promise<string[]> {
-    try {
-      const members = await guild.members.fetch();
-      const nicknames: string[] = [];
-
-      members.forEach(member => {
-        if (member.nickname) {
-          nicknames.push(member.nickname.toLowerCase());
-        }
-      });
-
-      return nicknames;
-    } catch (error) {
-      logger.error('Failed to fetch existing nicknames', {
-        guildId: guild.id,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return [];
-    }
+  private isNicknameTaken(nickname: string, existingNicknames: Set<string>): boolean {
+    const normalized = nickname.toLowerCase();
+    return existingNicknames.has(normalized);
   }
 
   /**
-   * Check if a nickname is already taken (case-insensitive)
+   * Build a Set of all current nicknames in a guild (case-insensitive)
+   * This should be called once and cached for bulk operations
    */
-  private isNicknameTaken(nickname: string, existingNicknames: string[]): boolean {
-    const normalized = nickname.toLowerCase();
-    return existingNicknames.includes(normalized);
+  async buildNicknameSet(guild: Guild): Promise<Set<string>> {
+    try {
+      const members = await guild.members.fetch();
+      const nicknameSet = new Set<string>();
+
+      members.forEach(member => {
+        if (member.nickname) {
+          nicknameSet.add(member.nickname.toLowerCase());
+        }
+      });
+
+      return nicknameSet;
+    } catch (error) {
+      logger.error('Failed to build nickname set', {
+        guildId: guild.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return new Set<string>();
+    }
   }
 
   /**
@@ -196,8 +181,9 @@ You can combine these like: Captain + Dih, Chief + Yapper, Professor + Bonk, Lor
 
   /**
    * Assign a nickname to a guild member
+   * Returns success status and error reason if failed
    */
-  async assignNickname(member: GuildMember, nickname: string): Promise<boolean> {
+  async assignNickname(member: GuildMember, nickname: string): Promise<{ success: boolean; error?: string }> {
     try {
       // Ensure nickname is within Discord's limits
       const truncated = this.truncateToDiscordLimit(nickname);
@@ -210,15 +196,64 @@ You can combine these like: Captain + Dih, Chief + Yapper, Professor + Bonk, Lor
         nickname: truncated
       });
       
-      return true;
+      return { success: true };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check for specific Discord permission errors
+      if (errorMessage.includes('Missing Permissions') || errorMessage.includes('Missing Access')) {
+        logger.warn('Cannot assign nickname due to role hierarchy', {
+          userId: member.id,
+          username: member.user.tag,
+          nickname,
+          error: errorMessage
+        });
+        return { success: false, error: 'role_hierarchy' };
+      }
+      
       logger.error('Failed to assign nickname', {
         userId: member.id,
         username: member.user.tag,
         nickname,
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage
       });
-      return false;
+ return { success: false, error: 'unknown' };
+    }
+  }
+
+  /**
+   * Remove a member's server nickname
+   * Returns success status and error reason if failed
+   */
+  async removeNickname(member: GuildMember): Promise<{ success: boolean; error?: string }> {
+    try {
+      await member.setNickname(null);
+      
+      logger.info('Nickname removed successfully', {
+        userId: member.id,
+        username: member.user.tag
+      });
+      
+      return { success: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check for specific Discord permission errors
+      if (errorMessage.includes('Missing Permissions') || errorMessage.includes('Missing Access')) {
+        logger.warn('Cannot remove nickname due to role hierarchy', {
+          userId: member.id,
+          username: member.user.tag,
+          error: errorMessage
+        });
+        return { success: false, error: 'role_hierarchy' };
+      }
+      
+      logger.error('Failed to remove nickname', {
+        userId: member.id,
+        username: member.user.tag,
+        error: errorMessage
+      });
+      return { success: false, error: 'unknown' };
     }
   }
 
@@ -239,21 +274,24 @@ You can combine these like: Captain + Dih, Chief + Yapper, Professor + Bonk, Lor
 
   /**
    * Generate and assign a nickname to a member (full flow)
+   * This is a convenience method that builds the nickname set internally
+   * For bulk operations, use the cached nickname set pattern instead
    */
-  async generateAndAssignNickname(member: GuildMember): Promise<boolean> {
+  async generateAndAssignNickname(member: GuildMember): Promise<{ success: boolean; error?: string }> {
     if (!member.guild) {
       logger.warn('Member has no guild, cannot assign nickname');
-      return false;
+      return { success: false, error: 'no_guild' };
     }
 
-    const nickname = await this.generateUniqueNickname(member.guild);
+    const nicknameSet = await this.buildNicknameSet(member.guild);
+    const nickname = await this.generateUniqueNickname(nicknameSet);
     
     if (!nickname) {
       logger.warn('Failed to generate unique nickname for member', {
         userId: member.id,
         username: member.user.tag
       });
-      return false;
+      return { success: false, error: 'generation_failed' };
     }
 
     return await this.assignNickname(member, nickname);

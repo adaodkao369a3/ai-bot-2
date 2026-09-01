@@ -668,6 +668,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
         if (parts[1] === 'all') {
           await this.handleNicknameAll(message);
+        } else if (parts[1] === 'reset' && parts[2] === 'all') {
+          await this.handleNicknameResetAll(message);
+        } else if (parts[1] === 'reset' && parts[2]) {
+          // Extract user ID from mention
+          const userIdMatch = parts[2].match(/<@!?(\d+)>/);
+          if (userIdMatch) {
+            await this.handleNicknameResetUser(message, userIdMatch[1]);
+          }
         } else if (parts[1]) {
           // Extract user ID from mention
           const userIdMatch = parts[1].match(/<@!?(\d+)>/);
@@ -941,9 +949,9 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
 
       // Generate and assign new nickname (overwrites existing if present)
-      const success = await nicknameService.generateAndAssignNickname(member);
+      const result = await nicknameService.generateAndAssignNickname(member);
 
-      if (success) {
+      if (result.success) {
         const targetName = await this.getGlobalUserName(message, targetUserId);
         await message.reply({
           content: `assigned a new nickname to ${targetName}`,
@@ -951,8 +959,12 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         });
         logger.info(`Nickname regenerated for user ${targetUserId} (${targetName}) by ${message.author.id}`);
       } else {
+        let errorMessage = 'failed to generate a nickname... sorry...';
+        if (result.error === 'role_hierarchy') {
+          errorMessage = 'cannot modify that user due to role hierarchy';
+        }
         await message.reply({
-          content: 'failed to generate a nickname... sorry...',
+          content: errorMessage,
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
       }
@@ -979,10 +991,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       const nicknameService = getNicknameService();
       const members = await message.guild.members.fetch();
       
+      // Build nickname set once to avoid repeated Discord API calls
+      const nicknameSet = await nicknameService.buildNicknameSet(message.guild);
+      
       let processed = 0;
       let skipped = 0;
       let failed = 0;
       let success = 0;
+      let skippedHierarchy = 0;
 
       await message.reply({
         content: 'processing all members without nicknames... this might take a while',
@@ -1006,12 +1022,23 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         processed++;
 
         try {
-          const assignSuccess = await nicknameService.generateAndAssignNickname(member);
+          const nickname = await nicknameService.generateUniqueNickname(nicknameSet);
           
-          if (assignSuccess) {
-            success++;
-            // Small delay between operations to avoid rate limits
-            await new Promise(resolve => setTimeout(resolve, 500));
+          if (nickname) {
+            const result = await nicknameService.assignNickname(member, nickname);
+            
+            if (result.success) {
+              success++;
+              // Add to nickname set to avoid duplicates
+              nicknameSet.add(nickname.toLowerCase());
+              // Small delay between operations to avoid rate limits
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } else if (result.error === 'role_hierarchy') {
+              skippedHierarchy++;
+              logger.info('Skipped member due to role hierarchy', { userId: memberId });
+            } else {
+              failed++;
+            }
           } else {
             failed++;
           }
@@ -1024,7 +1051,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
       }
 
-      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skipped} skipped`;
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skipped} skipped, ${skippedHierarchy} skipped (role hierarchy)`;
       if (message.channel.isSendable()) {
         await message.channel.send({
           content: summary,
@@ -1037,11 +1064,161 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         success,
         failed,
         skipped,
+        skippedHierarchy,
         guildId: message.guild.id,
         requestedBy: message.author.id
       });
     } catch (error) {
       logger.error('Failed to handle nickname all command', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      if (message.channel.isSendable()) {
+        await message.channel.send({
+          content: 'something went wrong during the bulk operation... check logs',
+          allowedMentions: { parse: [] }
+        });
+      }
+    }
+  }
+
+  /**
+   * Handle ~nickname reset @user command
+   * Remove a user's server nickname (admin/staff only)
+   */
+  private async handleNicknameResetUser(message: Message, targetUserId: string): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const nicknameService = getNicknameService();
+      const member = await message.guild.members.fetch(targetUserId);
+
+      if (!member) {
+        await message.reply({
+          content: 'Could not find that user.',
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return;
+      }
+
+      // Check if user has a nickname to remove
+      if (!nicknameService.hasNickname(member)) {
+        await message.reply({
+          content: 'that user doesn\'t have a nickname to remove',
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return;
+      }
+
+      const result = await nicknameService.removeNickname(member);
+
+      if (result.success) {
+        const targetName = await this.getGlobalUserName(message, targetUserId);
+        await message.reply({
+          content: `removed ${targetName}'s nickname`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        logger.info(`Nickname removed for user ${targetUserId} (${targetName}) by ${message.author.id}`);
+      } else {
+        let errorMessage = 'failed to remove nickname... sorry...';
+        if (result.error === 'role_hierarchy') {
+          errorMessage = 'cannot modify that user due to role hierarchy';
+        }
+        await message.reply({
+          content: errorMessage,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to handle nickname reset user command', {
+        targetUserId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply({
+        content: 'something went wrong... try again later',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+    }
+  }
+
+  /**
+   * Handle ~nickname reset all command
+   * Remove server nicknames from all members who have them (admin/staff only)
+   */
+  private async handleNicknameResetAll(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const nicknameService = getNicknameService();
+      const members = await message.guild.members.fetch();
+      
+      let processed = 0;
+      let skipped = 0;
+      let failed = 0;
+      let success = 0;
+      let skippedHierarchy = 0;
+
+      await message.reply({
+        content: 'removing all server nicknames... this might take a while',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+
+      // Process members sequentially to avoid rate limit issues
+      for (const [memberId, member] of members) {
+        // Skip bots
+        if (member.user.bot) {
+          skipped++;
+          continue;
+        }
+
+        // Skip members who don't have a nickname
+        if (!nicknameService.hasNickname(member)) {
+          skipped++;
+          continue;
+        }
+
+        processed++;
+
+        try {
+          const result = await nicknameService.removeNickname(member);
+          
+          if (result.success) {
+            success++;
+            // Small delay between operations to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } else if (result.error === 'role_hierarchy') {
+            skippedHierarchy++;
+            logger.info('Skipped member due to role hierarchy', { userId: memberId });
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          failed++;
+          logger.warn('Failed to remove nickname during bulk operation', {
+            userId: memberId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skipped} skipped, ${skippedHierarchy} skipped (role hierarchy)`;
+      if (message.channel.isSendable()) {
+        await message.channel.send({
+          content: summary,
+          allowedMentions: { parse: [] }
+        });
+      }
+
+      logger.info('Bulk nickname reset operation completed', {
+        processed,
+        success,
+        failed,
+        skipped,
+        skippedHierarchy,
+        guildId: message.guild.id,
+        requestedBy: message.author.id
+      });
+    } catch (error) {
+      logger.error('Failed to handle nickname reset all command', {
         error: error instanceof Error ? error.message : String(error)
       });
       if (message.channel.isSendable()) {

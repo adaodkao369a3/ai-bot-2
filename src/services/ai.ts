@@ -14,6 +14,7 @@ export interface AIRequest {
   memoryContext?: string;
   replyContext?: string;
   userName: string;
+  maxTokens?: number; // Optional override for max_tokens
 }
 
 export interface AIResponse {
@@ -91,7 +92,7 @@ export class AIService {
           model: this.model,
           messages: messages,
           temperature: 0.9,
-          max_tokens: 500,
+          max_tokens: request.maxTokens || 500,
           top_p: 0.95
         }),
         signal: controller.signal
