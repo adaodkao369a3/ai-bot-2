@@ -36,6 +36,18 @@ export class MessageRouter {
   }
 
   /**
+   * Normalize message for Order 66 trigger detection
+   * Strips punctuation/symbols and normalizes whitespace
+   */
+  private normalizeForOrder66(content: string): string {
+    return content
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation/symbols
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim();
+  }
+
+  /**
    * Main message routing pipeline
    */
   async handleMessage(message: Message, botUserId: string): Promise<void> {
@@ -58,6 +70,13 @@ export class MessageRouter {
       // Check for commands first
       if (content.startsWith('~')) {
         await this.handleCommand(message, content);
+        return;
+      }
+
+      // Check for Order 66 trigger (admin only)
+      const normalizedContent = this.normalizeForOrder66(content);
+      if (normalizedContent === 'bocchi execute order 66') {
+        await this.handleOrder66(message);
         return;
       }
 
@@ -1282,6 +1301,96 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           allowedMentions: { parse: [] }
         });
       }
+    }
+  }
+
+  /**
+   * Handle Order 66 trigger (admin only)
+   * Times out users from recent messages
+   */
+  private async handleOrder66(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      // Check if user is admin/staff
+      let member: GuildMember | null = null;
+      try {
+        member = await message.guild.members.fetch(message.author.id);
+      } catch (error) {
+        logger.warn('Failed to fetch guild member for Order 66', { userId: message.author.id });
+        return;
+      }
+
+      if (!member || !permissionService.isStaff(member)) {
+        logger.warn('Non-staff attempted Order 66', { userId: message.author.id });
+        return;
+      }
+
+      logger.info('Order 66 executed by admin', { userId: message.author.id, guildId: message.guild.id });
+
+      // Send the GIF
+      const ORDER_66_GIF = 'https://64.media.tumblr.com/a45e47255b2ed611d657bda6566b8b8f/00241dda5d4be5ac-c9/s540x810/55671d66feb384a7e5ba12c5eb36bad84586fa5a.gif';
+      if (message.channel.isSendable()) {
+        await message.channel.send(ORDER_66_GIF);
+      }
+
+      // Fetch the 10 most recent messages in the channel
+      const messages = await message.channel.messages.fetch({ limit: 10, before: message.id });
+
+      // Collect unique human users from those messages
+      const victimSet = new Set<string>();
+      for (const [msgId, msg] of messages) {
+        if (!msg.author.bot && msg.author.id !== message.author.id && msg.author.id !== message.client.user?.id) {
+          victimSet.add(msg.author.id);
+        }
+      }
+
+      const victims = Array.from(victimSet);
+      const successfulTimeouts: string[] = [];
+
+      // Timeout each victim for 30 seconds
+      for (const victimId of victims) {
+        try {
+          const victimMember = await message.guild.members.fetch(victimId);
+          
+          // Check if we can timeout this member (role hierarchy check)
+          await victimMember.timeout(30 * 1000, 'Order 66');
+          successfulTimeouts.push(victimId);
+          logger.info('Timed out victim for Order 66', { victimId });
+          
+          // Small delay between timeouts
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.warn('Failed to timeout victim for Order 66', {
+            victimId,
+            error: errorMessage
+          });
+          // Continue with next victim even if this one fails
+        }
+      }
+
+      // Send final message with mentions
+      const mentions = successfulTimeouts.map(id => `<@${id}>`).join(' ');
+      const victimCount = successfulTimeouts.length;
+      const finalMessage = victimCount > 0 
+        ? `executed ${mentions}. ${victimCount} victims. arrivederci`
+        : `executed nobody. 0 victims. arrivederci`;
+
+      if (message.channel.isSendable()) {
+        await message.channel.send(finalMessage);
+      }
+
+      logger.info('Order 66 completed', {
+        executorId: message.author.id,
+        totalVictims: victims.length,
+        successfulTimeouts: successfulTimeouts.length,
+        guildId: message.guild.id
+      });
+    } catch (error) {
+      logger.error('Failed to execute Order 66', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
