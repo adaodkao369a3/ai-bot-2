@@ -989,10 +989,22 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
     try {
       const nicknameService = getNicknameService();
-      const members = await message.guild.members.fetch();
       
-      // Build nickname set once to avoid repeated Discord API calls
-      const nicknameSet = await nicknameService.buildNicknameSet(message.guild);
+      // Use cached members if available to avoid Guild Members Request
+      // Only fetch if cache is empty
+      let members = message.guild.members.cache;
+      if (members.size === 0) {
+        logger.info('Member cache empty, fetching guild members once');
+        members = await message.guild.members.fetch();
+      }
+      
+      // Build nickname set from the members to avoid another fetch
+      const nicknameSet = new Set<string>();
+      members.forEach(member => {
+        if (member.nickname) {
+          nicknameSet.add(member.nickname.toLowerCase());
+        }
+      });
       
       let processed = 0;
       let skipped = 0;
@@ -1149,7 +1161,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
     try {
       const nicknameService = getNicknameService();
-      const members = await message.guild.members.fetch();
+      
+      // Use cached members if available to avoid Guild Members Request
+      // Only fetch if cache is empty
+      let members = message.guild.members.cache;
+      if (members.size === 0) {
+        logger.info('Member cache empty, fetching guild members once');
+        members = await message.guild.members.fetch();
+      }
       
       let processed = 0;
       let skipped = 0;

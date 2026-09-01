@@ -72,31 +72,6 @@ export class NicknameService {
   }
 
   /**
-   * Build a Set of all current nicknames in a guild (case-insensitive)
-   * This should be called once and cached for bulk operations
-   */
-  async buildNicknameSet(guild: Guild): Promise<Set<string>> {
-    try {
-      const members = await guild.members.fetch();
-      const nicknameSet = new Set<string>();
-
-      members.forEach(member => {
-        if (member.nickname) {
-          nicknameSet.add(member.nickname.toLowerCase());
-        }
-      });
-
-      return nicknameSet;
-    } catch (error) {
-      logger.error('Failed to build nickname set', {
-        guildId: guild.id,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return new Set<string>();
-    }
-  }
-
-  /**
    * Truncate nickname to Discord's character limit
    */
   private truncateToDiscordLimit(nickname: string): string {
@@ -205,7 +180,19 @@ export class NicknameService {
       return { success: false, error: 'no_guild' };
     }
 
-    const nicknameSet = await this.buildNicknameSet(member.guild);
+    // Build nickname set from cached members if available, otherwise fetch once
+    let members = member.guild.members.cache;
+    if (members.size === 0) {
+      members = await member.guild.members.fetch();
+    }
+    
+    const nicknameSet = new Set<string>();
+    members.forEach(m => {
+      if (m.nickname) {
+        nicknameSet.add(m.nickname.toLowerCase());
+      }
+    });
+    
     const nickname = await this.generateUniqueNickname(nicknameSet);
     
     if (!nickname) {
