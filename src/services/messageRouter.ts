@@ -990,15 +990,12 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
     try {
       const nicknameService = getNicknameService();
       
-      // Use cached members if available to avoid Guild Members Request
-      // Only fetch if cache is empty
-      let members = message.guild.members.cache;
-      if (members.size === 0) {
-        logger.info('Member cache empty, fetching guild members once');
-        members = await message.guild.members.fetch();
-      }
+      // ALWAYS fetch the complete guild member list for bulk operations
+      // Do not rely on cache as it may not contain all members
+      logger.info('Fetching complete guild member list for bulk nickname operation');
+      const members = await message.guild.members.fetch();
       
-      // Build nickname set from the members to avoid another fetch
+      // Build nickname set from the fetched members to avoid another fetch
       const nicknameSet = new Set<string>();
       members.forEach(member => {
         if (member.nickname) {
@@ -1009,6 +1006,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       let processed = 0;
       let skippedOwnerRole = 0;
       let skippedBot = 0;
+      let skippedSelf = 0;
       let skippedAlreadyHasNickname = 0;
       let skippedHierarchy = 0;
       let failed = 0;
@@ -1021,6 +1019,13 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
       // Process ALL members sequentially to avoid rate limit issues
       for (const [memberId, member] of members) {
+        // Skip Bocchi itself
+        if (memberId === message.guild.members.me?.id) {
+          skippedSelf++;
+          logger.debug('Skipped Bocchi itself', { userId: memberId });
+          continue;
+        }
+
         // Skip owner role members FIRST (before any other checks)
         if (nicknameService.hasOwnerRole(member)) {
           skippedOwnerRole++;
@@ -1072,7 +1077,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
       }
 
-      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedOwnerRole} skipped (owner role), ${skippedBot} skipped (bot), ${skippedAlreadyHasNickname} skipped (has nickname), ${skippedHierarchy} skipped (role hierarchy)`;
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedOwnerRole} skipped (owner role), ${skippedBot} skipped (bot), ${skippedSelf} skipped (self), ${skippedAlreadyHasNickname} skipped (has nickname), ${skippedHierarchy} skipped (role hierarchy)`;
       if (message.channel.isSendable()) {
         await message.channel.send({
           content: summary,
@@ -1087,6 +1092,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         failed,
         skippedOwnerRole,
         skippedBot,
+        skippedSelf,
         skippedAlreadyHasNickname,
         skippedHierarchy,
         guildId: message.guild.id,
@@ -1174,17 +1180,15 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
     try {
       const nicknameService = getNicknameService();
       
-      // Use cached members if available to avoid Guild Members Request
-      // Only fetch if cache is empty
-      let members = message.guild.members.cache;
-      if (members.size === 0) {
-        logger.info('Member cache empty, fetching guild members once');
-        members = await message.guild.members.fetch();
-      }
+      // ALWAYS fetch the complete guild member list for bulk operations
+      // Do not rely on cache as it may not contain all members
+      logger.info('Fetching complete guild member list for bulk nickname reset operation');
+      const members = await message.guild.members.fetch();
       
       let processed = 0;
       let skippedOwnerRole = 0;
       let skippedBot = 0;
+      let skippedSelf = 0;
       let skippedNoNickname = 0;
       let skippedHierarchy = 0;
       let failed = 0;
@@ -1197,6 +1201,13 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
       // Process ALL members sequentially to avoid rate limit issues
       for (const [memberId, member] of members) {
+        // Skip Bocchi itself
+        if (memberId === message.guild.members.me?.id) {
+          skippedSelf++;
+          logger.debug('Skipped Bocchi itself', { userId: memberId });
+          continue;
+        }
+
         // Skip owner role members FIRST (before any other checks)
         if (nicknameService.hasOwnerRole(member)) {
           skippedOwnerRole++;
@@ -1240,7 +1251,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
       }
 
-      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedOwnerRole} skipped (owner role), ${skippedBot} skipped (bot), ${skippedNoNickname} skipped (no nickname), ${skippedHierarchy} skipped (role hierarchy)`;
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedOwnerRole} skipped (owner role), ${skippedBot} skipped (bot), ${skippedSelf} skipped (self), ${skippedNoNickname} skipped (no nickname), ${skippedHierarchy} skipped (role hierarchy)`;
       if (message.channel.isSendable()) {
         await message.channel.send({
           content: summary,
@@ -1255,6 +1266,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         failed,
         skippedOwnerRole,
         skippedBot,
+        skippedSelf,
         skippedNoNickname,
         skippedHierarchy,
         guildId: message.guild.id,
