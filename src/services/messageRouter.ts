@@ -220,10 +220,21 @@ export class MessageRouter {
           const referencedMessage = await message.fetchReference();
           if (referencedMessage && referencedMessage.content) {
             const originalAuthor = referencedMessage.author.globalName || referencedMessage.author.displayName;
-            replyContext = `Original message by ${originalAuthor}: "${referencedMessage.content}"`;
+            const currentUser = globalDisplayName;
+            
+            // Structure the reply context to clearly distinguish between current user and referenced message
+            replyContext = `REFERENCED MESSAGE CONTEXT:
+The user is replying to a message by ${originalAuthor}.
+Referenced message content: "${referencedMessage.content}"
+Current user: ${currentUser}
+Current message: "${cleanContent}"
+
+When the user asks about "they", "them", "that person", "this guy", "he", "she", etc., they are referring to ${originalAuthor} and their message, not ${currentUser}.`;
+            
             logger.debug('Fetched reply context', {
               userId,
               originalAuthor,
+              currentUser,
               originalMessage: referencedMessage.content.substring(0, 50)
             });
           }
