@@ -3,7 +3,7 @@
  * Central message handling pipeline that coordinates all services
  */
 
-import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType } from 'discord.js';
+import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction } from 'discord.js';
 import { botStateService } from './botState';
 import { blacklistService } from './blacklist';
 import { rateLimitService } from './rateLimit';
@@ -108,8 +108,19 @@ export class MessageRouter {
       const confessionService = getConfessionService();
       const activeSession = await confessionService.getActiveSession(guildId);
       if (activeSession && message.channelId === activeSession.booth_channel_id) {
-        await this.handleBoothMessage(message);
-        return;
+        // Check for end confession command
+        const normalizedContent = content.toLowerCase().trim();
+        if (normalizedContent === 'bocchi end confession') {
+          await this.endConfessionSession(message.guild, activeSession.id, activeSession.booth_channel_id, message.author.id);
+          
+          if (message.channel.isSendable()) {
+            await message.reply('yes my child. you may go now.');
+          }
+          return;
+        }
+        
+        // Continue to normal AI pipeline for booth conversation
+        // Do NOT return here - let it process through the normal message flow
       }
 
       // Fetch the guild member before any gates so staff/admins can bypass
@@ -1463,7 +1474,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       const response = responses[Math.floor(Math.random() * responses.length)];
 
       const enterButton = new ButtonBuilder()
-        .setCustomId(`confession_enter_${message.author.id}`)
+        .setCustomId(`confession_modal_${message.author.id}`)
         .setLabel('🚪 Enter Confession Booth')
         .setStyle(ButtonStyle.Primary);
 
@@ -1489,9 +1500,9 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
   }
 
   /**
-   * Handle Enter Confession Booth button click
+   * Handle Confession Modal Submit
    */
-  async handleConfessionEnter(message: Message): Promise<void> {
+  async handleConfessionSubmit(message: Message, confessionText: string): Promise<void> {
     if (!message.guild) return;
 
     const guild = message.guild;
@@ -1532,10 +1543,40 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         return;
       }
 
-      // Send booth introduction
-      const intro = 'alright... you\'re in the booth now.\nyou have 5 minutes. tell me your sins.';
+      // Save confession text immediately
+      await confessionService.updateConfessionText(session.id, confessionText);
+
+      // Publish confession immediately
+      try {
+        const confessionNumber = await confessionService.getNextConfessionNumber(guild.id);
+        await confessionService.saveConfession(guild.id, confessionNumber, confessionText);
+        await confessionService.publishConfession(guild, confessionNumber, confessionText);
+      } catch (error) {
+        logger.error('Failed to publish confession', {
+          sessionId: session.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+
+      // Send booth response mentioning the user
+      const response = `<@${message.author.id}> alright... that's certainly a confession. what the hell`;
       if (boothChannel.isSendable()) {
-        await boothChannel.send(intro);
+        await boothChannel.send(response);
+      }
+
+      // Send persistent Leave button
+      const leaveButton = new ButtonBuilder()
+        .setCustomId(`confession_leave_${message.author.id}`)
+        .setLabel('🚪 Leave Confession Booth')
+        .setStyle(ButtonStyle.Danger);
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(leaveButton);
+
+      if (boothChannel.isSendable()) {
+        await boothChannel.send({
+          content: 'Type `bocchi end confession` to leave, or click the button below.',
+          components: [row]
+        });
       }
 
       // Start timer
@@ -1550,10 +1591,10 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       });
 
       if (message.channel.isSendable()) {
-        await message.reply('you\'re in the booth now. check your DMs or the booth channel.');
+        await message.reply('confession submitted. check the booth channel.');
       }
     } catch (error) {
-      logger.error('Failed to handle confession enter', {
+      logger.error('Failed to handle confession submit', {
         error: error instanceof Error ? error.message : String(error)
       });
     }
@@ -1612,22 +1653,8 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         });
       }
 
-      // End session in database
+      // End session in database (confession already published on submit)
       await confessionService.endSession(sessionId, session.confession_text);
-
-      // Publish confession if there's content
-      if (session.confession_text && session.confession_text.trim().length > 0) {
-        try {
-          const confessionNumber = await confessionService.getNextConfessionNumber(guild.id);
-          await confessionService.saveConfession(guild.id, confessionNumber, session.confession_text);
-          await confessionService.publishConfession(guild, confessionNumber, session.confession_text);
-        } catch (error) {
-          logger.error('Failed to publish confession', {
-            sessionId,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
 
       logger.info('Confession session ended', {
         sessionId,
@@ -1637,60 +1664,6 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
     } catch (error) {
       logger.error('Failed to end confession session', {
         sessionId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  /**
-   * Handle confession booth messages
-   */
-  async handleBoothMessage(message: Message): Promise<void> {
-    if (!message.guild) return;
-
-    try {
-      const confessionService = getConfessionService();
-      const activeSession = await confessionService.getActiveSession(message.guild.id);
-
-      if (!activeSession || activeSession.user_id !== message.author.id) {
-        return; // Not the active confessor
-      }
-
-      // Check for end confession command
-      const normalizedContent = message.content.toLowerCase().trim();
-      if (normalizedContent === 'bocchi end confession') {
-        await this.endConfessionSession(message.guild, activeSession.id, activeSession.booth_channel_id, message.author.id);
-        
-        if (message.channel.isSendable()) {
-          await message.reply('yes my child. you may go now.');
-        }
-        return;
-      }
-
-      // Update confession text (append to existing)
-      const currentText = activeSession.confession_text || '';
-      const newText = currentText ? `${currentText}\n${message.content}` : message.content;
-      await confessionService.updateConfessionText(activeSession.id, newText);
-
-      // Add Leave button to every message
-      const leaveButton = new ButtonBuilder()
-        .setCustomId(`confession_leave_${message.author.id}`)
-        .setLabel('🚪 Leave Confession Booth')
-        .setStyle(ButtonStyle.Danger);
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(leaveButton);
-
-      if (message.channel.isSendable()) {
-        await message.channel.send({
-          content: '...',
-          components: [row]
-        });
-      }
-
-      // Process as normal AI response (isolated conversation)
-      // This will be handled by the normal message flow after this check
-    } catch (error) {
-      logger.error('Failed to handle booth message', {
         error: error instanceof Error ? error.message : String(error)
       });
     }

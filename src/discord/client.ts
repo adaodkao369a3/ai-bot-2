@@ -3,7 +3,7 @@
  * Creates Discord client with appropriate intents for planned functionality
  */
 
-import { Client, GatewayIntentBits, ActivityType } from 'discord.js';
+import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
 import { getNicknameService } from '../services/nickname';
@@ -81,37 +81,62 @@ export function createDiscordClient(): Client {
 
   // Handle button interactions
   client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isButton()) return;
-    
-    const customId = interaction.customId;
-    
-    if (customId.startsWith('confession_enter_')) {
-      await interaction.deferReply();
-      // Create a mock message object for the handler
-      const mockMessage = {
-        guild: interaction.guild,
-        author: interaction.user,
-        channel: interaction.channel,
-        channelId: interaction.channelId,
-        reply: async (content: any) => {
-          await interaction.editReply(content);
-        }
-      } as any;
+    if (interaction.isButton()) {
+      const customId = interaction.customId;
       
-      await messageRouter.handleConfessionEnter(mockMessage);
-    } else if (customId.startsWith('confession_leave_')) {
-      await interaction.deferReply();
-      const mockMessage = {
-        guild: interaction.guild,
-        author: interaction.user,
-        channel: interaction.channel,
-        channelId: interaction.channelId,
-        reply: async (content: any) => {
-          await interaction.editReply(content);
-        }
-      } as any;
+      if (customId.startsWith('confession_modal_')) {
+        // Show confession modal
+        const modal = new ModalBuilder()
+          .setCustomId(`confession_submit_${interaction.user.id}`)
+          .setTitle('Confession Booth');
+
+        const confessionInput = new TextInputBuilder()
+          .setCustomId('confession_text')
+          .setLabel('Tell Bocchi your confession')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000);
+
+        const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(confessionInput);
+
+        modal.addComponents(firstActionRow);
+
+        await interaction.showModal(modal);
+        return;
+      } else if (customId.startsWith('confession_leave_')) {
+        await interaction.deferReply();
+        const mockMessage = {
+          guild: interaction.guild,
+          author: interaction.user,
+          channel: interaction.channel,
+          channelId: interaction.channelId,
+          reply: async (content: any) => {
+            await interaction.editReply(content);
+          }
+        } as any;
+        
+        await messageRouter.handleConfessionLeave(mockMessage);
+      }
+    } else if (interaction.isModalSubmit()) {
+      const customId = interaction.customId;
       
-      await messageRouter.handleConfessionLeave(mockMessage);
+      if (customId.startsWith('confession_submit_')) {
+        const confessionText = interaction.fields.getTextInputValue('confession_text');
+        
+        await interaction.deferReply();
+        
+        const mockMessage = {
+          guild: interaction.guild,
+          author: interaction.user,
+          channel: interaction.channel,
+          channelId: interaction.channelId,
+          reply: async (content: any) => {
+            await interaction.editReply(content);
+          }
+        } as any;
+        
+        await messageRouter.handleConfessionSubmit(mockMessage, confessionText);
+      }
     }
   });
 
