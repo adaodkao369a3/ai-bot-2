@@ -14,8 +14,8 @@ export function createDiscordClient(): Client {
       GatewayIntentBits.Guilds,           // Required for guild/server functionality
       GatewayIntentBits.GuildMessages,    // Required to receive messages in servers
       GatewayIntentBits.MessageContent,   // Required to read message content (privileged)
+      GatewayIntentBits.GuildMembers,     // Required to detect new member joins
       // Future intents can be added here as needed:
-      // GatewayIntentBits.GuildMembers,
       // GatewayIntentBits.GuildMessageReactions,
       // etc.
     ]
@@ -42,6 +42,93 @@ export function createDiscordClient(): Client {
     }
     
     await messageRouter.handleMessage(message, client.user.id);
+  });
+
+  // Track last used welcome message index to avoid immediate repetition
+  let lastWelcomeMessageIndex = -1;
+
+  // Handle new member joins - only sends welcome to hardcoded channel
+  client.on('guildMemberAdd', async (member) => {
+    if (!client.user) {
+      logger.warn('Discord client user not available, skipping member join');
+      return;
+    }
+
+    // Hardcoded welcome channel ID (stage floor)
+    const WELCOME_CHANNEL_ID = '1526872609717747762';
+
+    // Bocchi-style welcome messages pool (with USER_MENTION placeholder)
+    const welcomeMessageTemplates = [
+      `hii USER_MENTION welcome... please don't be scared, i'm already scared enough for both of us`,
+      `oh... USER_MENTION joined. hi. welcome. um. yeah.`,
+      `hii USER_MENTION welcome to the server!! please enjoy your stay... preferably without looking at me`,
+      `USER_MENTION has arrived... everyone act normal. WAIT I DON'T KNOW HOW TO ACT NORMAL`,
+      `uhh hi USER_MENTION... welcome to this place hehe`,
+      `welcome USER_MENTION!! i was totally prepared for this interaction`,
+      `h-hi USER_MENTION welcome!! please ignore how awkward this is`,
+      `USER_MENTION joined!! this is probably a good thing. probably.`,
+      `oh, you're new... hi USER_MENTION welcome to the chaos`,
+      `welcome USER_MENTION... i hope you like it here because i have no idea what i'm doing`,
+      `hii USER_MENTION welcome!! um... that's it. i practiced that`,
+      `USER_MENTION welcome to the server!! please make yourself comfortable while i hide in the corner`,
+      `new person detected... h-hi USER_MENTION welcome`,
+      `everyone say hi to USER_MENTION!! ...wait why did i say that out loud`,
+      `hii USER_MENTION welcome!! don't worry, i'm only slightly socially malfunctioning`,
+      `USER_MENTION just joined... welcome. you can't leave now.`,
+      `welcome USER_MENTION!! congrats on finding this place somehow`,
+      `h-hi USER_MENTION... welcome to the server. please be nice to me`,
+      `USER_MENTION has entered the stage... somebody do something.`,
+      `welcome USER_MENTION!! i hope you have fun here... unlike me, probably`
+    ];
+
+    try {
+      // Get the welcome channel
+      const welcomeChannel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
+      
+      if (!welcomeChannel) {
+        logger.warn('Welcome channel not found', { channelId: WELCOME_CHANNEL_ID });
+        return;
+      }
+
+      // Check if channel is sendable (text-based)
+      if (!welcomeChannel.isSendable()) {
+        logger.warn('Welcome channel is not sendable', { channelId: WELCOME_CHANNEL_ID });
+        return;
+      }
+
+      // Select a random welcome message template, avoiding immediate repetition
+      let messageIndex;
+      do {
+        messageIndex = Math.floor(Math.random() * welcomeMessageTemplates.length);
+      } while (messageIndex === lastWelcomeMessageIndex && welcomeMessageTemplates.length > 1);
+      
+      lastWelcomeMessageIndex = messageIndex;
+      const selectedTemplate = welcomeMessageTemplates[messageIndex];
+
+      // Replace the placeholder with the actual user mention
+      const finalMessage = selectedTemplate.replace(/USER_MENTION/g, `<@${member.id}>`);
+
+      // Send welcome message with proper mention settings to actually ping the user
+      await welcomeChannel.send({
+        content: finalMessage,
+        allowedMentions: {
+          users: [member.id], // Only allow mentioning the specific new member
+          repliedUser: false
+        }
+      });
+      
+      logger.info('Welcome message sent', { 
+        userId: member.id, 
+        username: member.user.tag,
+        channelId: WELCOME_CHANNEL_ID,
+        messageIndex
+      });
+    } catch (error) {
+      logger.error('Failed to send welcome message', {
+        userId: member.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   });
 
   client.on('error', (error) => {
