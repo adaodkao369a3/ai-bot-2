@@ -15,11 +15,9 @@ import { blacklistService } from './services/blacklist';
 import { rateLimitService } from './services/rateLimit';
 import { conversationContextService } from './services/conversationContext';
 import { memeService } from './services/meme';
-import { Client, EmbedBuilder } from 'discord.js';
 
 async function main(): Promise<void> {
   let discordClient: ReturnType<typeof createDiscordClient> | null = null;
-  let memeCheckInterval: NodeJS.Timeout | null = null;
 
   try {
     // Step 1: Bocchi is starting
@@ -33,9 +31,6 @@ async function main(): Promise<void> {
 
     // Register cleanup handlers early
     shutdownManager.registerHandler(async () => {
-      if (memeCheckInterval) {
-        clearInterval(memeCheckInterval);
-      }
       if (discordClient) {
         await disconnectDiscord(discordClient);
       }
@@ -73,22 +68,7 @@ async function main(): Promise<void> {
     await connectDiscord(discordClient, env.DISCORD_TOKEN);
     healthTracker.setDiscordReady(true);
 
-    // Step 7: Start background meme scheduler
-    if (discordClient) {
-      const client = discordClient; // Capture non-null client for the interval
-      memeCheckInterval = setInterval(async () => {
-        try {
-          await checkAndDropMemes(client);
-        } catch (error) {
-          logger.error('Error in meme scheduler', {
-            error: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }, 60000); // Check every minute
-      logger.info('Meme scheduler started (15-minute intervals with reply detection)');
-    }
-
-    // Step 8: Bocchi is ready
+    // Step 7: Bocchi is ready
     healthTracker.setInitialized(true);
     logger.info(`${BOT_NAME} is ready`, {
       status: healthTracker.getReadinessReport()
@@ -102,71 +82,6 @@ async function main(): Promise<void> {
       error: error instanceof Error ? error.message : String(error) 
     });
     process.exit(1);
-  }
-}
-
-/**
- * Background task to check for scheduled meme drops
- * This runs every minute to see if any channels need a meme drop
- * Only drops memes in channels where the bot is actively being talked to
- */
-async function checkAndDropMemes(client: Client): Promise<void> {
-  if (!client.user) return;
-
-  // Get all channels where the bot is present and active
-  for (const guild of client.guilds.cache.values()) {
-    const botEnabled = await botStateService.isEnabled(guild.id);
-    if (!botEnabled) continue;
-
-    // Check all text channels in the guild
-    for (const channel of guild.channels.cache.values()) {
-      if (!channel.isTextBased() || channel.isDMBased()) continue;
-
-      try {
-        // Check if this channel should get a meme drop (only if recently active)
-        if (memeService.shouldDropIdleMeme(channel.id)) {
-          // Verify the channel is actually active by checking recent messages
-          const messages = await channel.messages.fetch({ limit: 5 });
-          const recentMessages = messages.filter(m => !m.author.bot && m.createdTimestamp > Date.now() - 30 * 60 * 1000); // Messages from last 30 minutes
-          
-          // Only drop meme if there's recent human activity in the channel
-          if (recentMessages.size > 0) {
-            // Get the last message for context
-            const lastMessage = messages.first();
-            
-            if (lastMessage && !lastMessage.author.bot) {
-              // Drop a meme with conversation context
-              const conversationContext = lastMessage.content || '';
-              const meme = await memeService.fetchMeme(conversationContext);
-              
-              if (meme) {
-                const dropMessages = [
-                  'vibe check',
-                  'random meme drop',
-                  'here\'s something',
-                  'meme time'
-                ];
-                
-                await channel.send({
-                  content: dropMessages[Math.floor(Math.random() * dropMessages.length)],
-                  embeds: [
-                    new EmbedBuilder()
-                      .setImage(meme.imageUrl)
-                      .setColor(0xFFA500)
-                  ]
-                });
-                
-                memeService.recordMemeDrop(channel.id);
-                logger.info(`Dropped scheduled meme in active channel ${channel.id}`);
-              }
-            }
-          }
-        }
-      } catch (error) {
-        // Skip channels we can't access
-        continue;
-      }
-    }
   }
 }
 

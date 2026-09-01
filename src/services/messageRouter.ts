@@ -118,9 +118,6 @@ export class MessageRouter {
         false
       );
 
-      // Update channel activity for meme scheduling
-      memeService.updateChannelActivity(channelId);
-
       // Step 7: Extract actual message content (remove bot name/mention)
       const cleanContent = addressingService.extractContent(message, botUserId);
 
@@ -274,11 +271,6 @@ export class MessageRouter {
 
         // Step 18: Handle media replies (3 out of 6 times probability)
         await this.handleMediaReply(message, conversationContext);
-
-        // Step 19: Check for scheduled meme drop (7-minute intervals)
-        if (memeService.shouldDropIdleMeme(channelId)) {
-          await this.dropMeme(message, conversationContext);
-        }
       } else {
         // AI failed, send error message
         const errorMessage = personalityService.getErrorMessage();
@@ -598,44 +590,6 @@ export class MessageRouter {
       }
     } catch (error) {
       logger.warn('Failed to send media reply', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  /**
-   * Fetch a real meme from the meme API and post only the image.
-   * No title, subreddit, Reddit URL, or caption is put inside the embed.
-   */
-  private async dropMeme(message: Message, conversationContext: string): Promise<void> {
-    try {
-      const meme = await memeService.fetchMeme(conversationContext);
-      if (!meme) {
-        return;
-      }
-
-      const dropMessages = [
-        'vibe check',
-        'random meme drop',
-        'here\'s something',
-        'meme time'
-      ];
-      await message.reply({
-        content: dropMessages[Math.floor(Math.random() * dropMessages.length)],
-        embeds: [
-          new EmbedBuilder()
-            .setImage(meme.imageUrl)
-            .setColor(0xFFA500)
-        ],
-        allowedMentions: {
-          parse: []
-        }
-      });
-
-      // Record meme drop for cooldown
-      memeService.recordMemeDrop(message.channelId);
-    } catch (error) {
-      logger.warn('Failed to drop meme', {
         error: error instanceof Error ? error.message : String(error)
       });
     }
