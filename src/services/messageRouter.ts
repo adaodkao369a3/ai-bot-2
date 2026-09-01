@@ -3,7 +3,7 @@
  * Central message handling pipeline that coordinates all services
  */
 
-import { Message, GuildMember, EmbedBuilder } from 'discord.js';
+import { Message, GuildMember, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType } from 'discord.js';
 import { botStateService } from './botState';
 import { blacklistService } from './blacklist';
 import { rateLimitService } from './rateLimit';
@@ -20,6 +20,7 @@ import { mediaService } from './media';
 import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
 import { initNicknameService, getNicknameService } from './nickname';
+import { initConfessionService, getConfessionService } from './confession';
 import { GUIDE_CHANNEL_ID } from '../config';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
@@ -33,6 +34,8 @@ export class MessageRouter {
     memoryExtractionService.setAIService(this.aiService);
     // Initialize nickname service (no longer needs AI service)
     initNicknameService();
+    // Initialize confession service
+    initConfessionService();
   }
 
   /**
@@ -45,6 +48,21 @@ export class MessageRouter {
       .replace(/[^\w\s]/g, '') // Remove punctuation/symbols
       .replace(/\s+/g, ' ') // Normalize whitespace
       .trim();
+  }
+
+  /**
+   * Check if message is a confession trigger
+   */
+  private isConfessionTrigger(content: string): boolean {
+    const lowerContent = content.toLowerCase();
+    const triggers = [
+      'i need to confess',
+      'confession time',
+      'i need to come clean',
+      'confess something',
+      'come clean'
+    ];
+    return triggers.some(trigger => lowerContent.includes(trigger));
   }
 
   /**
@@ -77,6 +95,20 @@ export class MessageRouter {
       const normalizedContent = this.normalizeForOrder66(content);
       if (normalizedContent === 'bocchi execute order 66') {
         await this.handleOrder66(message);
+        return;
+      }
+
+      // Check for confession trigger
+      if (this.isConfessionTrigger(content)) {
+        await this.handleConfessionTrigger(message);
+        return;
+      }
+
+      // Check if message is in confession booth
+      const confessionService = getConfessionService();
+      const activeSession = await confessionService.getActiveSession(guildId);
+      if (activeSession && message.channelId === activeSession.booth_channel_id) {
+        await this.handleBoothMessage(message);
         return;
       }
 
@@ -1389,6 +1421,274 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       });
     } catch (error) {
       logger.error('Failed to execute Order 66', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Handle confession trigger
+   */
+  private async handleConfessionTrigger(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const confessionService = getConfessionService();
+      const activeSession = await confessionService.getActiveSession(message.guild.id);
+
+      if (activeSession) {
+        // Booth is occupied
+        const responses = [
+          'wait your turn, someone\'s confessing 💀',
+          'wait. someone\'s already in the booth. have some shame and patience.',
+          'the booth is occupied. wait your turn.'
+        ];
+        const response = responses[Math.floor(Math.random() * responses.length)];
+        
+        if (message.channel.isSendable()) {
+          await message.reply({
+            content: response,
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+        }
+        return;
+      }
+
+      // Booth is available, show button
+      const responses = [
+        'okay... come to the booth.',
+        'alright... the booth is open.',
+        'come to the booth.'
+      ];
+      const response = responses[Math.floor(Math.random() * responses.length)];
+
+      const enterButton = new ButtonBuilder()
+        .setCustomId(`confession_enter_${message.author.id}`)
+        .setLabel('🚪 Enter Confession Booth')
+        .setStyle(ButtonStyle.Primary);
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(enterButton);
+
+      if (message.channel.isSendable()) {
+        await message.reply({
+          content: response,
+          components: [row],
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      }
+
+      logger.info('Confession booth offered', {
+        userId: message.author.id,
+        guildId: message.guild.id
+      });
+    } catch (error) {
+      logger.error('Failed to handle confession trigger', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Handle Enter Confession Booth button click
+   */
+  async handleConfessionEnter(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const confessionService = getConfessionService();
+      
+      // Try to create session atomically
+      const boothChannel = await confessionService.getOrCreateBoothChannel(message.guild);
+      if (!boothChannel) {
+        if (message.channel.isSendable()) {
+          await message.reply('failed to create booth channel... try again later');
+        }
+        return;
+      }
+
+      const session = await confessionService.createSession(
+        message.guild.id,
+        message.author.id,
+        boothChannel.id
+      );
+
+      if (!session) {
+        // Someone else got there first
+        if (message.channel.isSendable()) {
+          await message.reply('wait your turn, someone\'s confessing 💀');
+        }
+        return;
+      }
+
+      // Grant access to booth
+      const accessGranted = await confessionService.grantBoothAccess(boothChannel, message.author.id);
+      if (!accessGranted) {
+        await confessionService.endSession(session.id);
+        if (message.channel.isSendable()) {
+          await message.reply('failed to grant booth access... try again later');
+        }
+        return;
+      }
+
+      // Send booth introduction
+      const intro = 'alright... you\'re in the booth now.\nyou have 5 minutes. tell me your sins.';
+      if (boothChannel.isSendable()) {
+        await boothChannel.send(intro);
+      }
+
+      // Start timer
+      confessionService.startTimer(session.id, message.guild.id, message.author.id, async () => {
+        await this.endConfessionSession(message.guild, session.id, boothChannel.id, message.author.id);
+      });
+
+      logger.info('Confession session started', {
+        sessionId: session.id,
+        userId: message.author.id,
+        guildId: message.guild.id
+      });
+
+      if (message.channel.isSendable()) {
+        await message.reply('you\'re in the booth now. check your DMs or the booth channel.');
+      }
+    } catch (error) {
+      logger.error('Failed to handle confession enter', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Handle Leave Confession Booth button click
+   */
+  async handleConfessionLeave(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const confessionService = getConfessionService();
+      const activeSession = await confessionService.getActiveSession(message.guild.id);
+
+      if (!activeSession || activeSession.user_id !== message.author.id) {
+        if (message.channel.isSendable()) {
+          await message.reply('you\'re not in the booth...');
+        }
+        return;
+      }
+
+      await this.endConfessionSession(message.guild, activeSession.id, activeSession.booth_channel_id, message.author.id);
+
+      if (message.channel.isSendable()) {
+        await message.reply('you may go now. arrivederci.');
+      }
+    } catch (error) {
+      logger.error('Failed to handle confession leave', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * End a confession session
+   */
+  private async endConfessionSession(guild: Guild, sessionId: number, boothChannelId: string, userId: string): Promise<void> {
+    try {
+      const confessionService = getConfessionService();
+      
+      // Get session data before ending
+      const session = await confessionService.getActiveSession(guild.id);
+      if (!session) return;
+
+      // Revoke access
+      try {
+        const boothChannel = await guild.channels.fetch(boothChannelId);
+        if (boothChannel && boothChannel.type === 0) { // GuildText
+          await confessionService.revokeBoothAccess(boothChannel, userId);
+        }
+      } catch (error) {
+        logger.error('Failed to revoke booth access during session end', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+
+      // End session in database
+      await confessionService.endSession(sessionId, session.confession_text);
+
+      // Publish confession if there's content
+      if (session.confession_text && session.confession_text.trim().length > 0) {
+        try {
+          const confessionNumber = await confessionService.getNextConfessionNumber(guild.id);
+          await confessionService.saveConfession(guild.id, confessionNumber, session.confession_text);
+          await confessionService.publishConfession(guild, confessionNumber, session.confession_text);
+        } catch (error) {
+          logger.error('Failed to publish confession', {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      logger.info('Confession session ended', {
+        sessionId,
+        guildId: guild.id,
+        userId
+      });
+    } catch (error) {
+      logger.error('Failed to end confession session', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Handle confession booth messages
+   */
+  async handleBoothMessage(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const confessionService = getConfessionService();
+      const activeSession = await confessionService.getActiveSession(message.guild.id);
+
+      if (!activeSession || activeSession.user_id !== message.author.id) {
+        return; // Not the active confessor
+      }
+
+      // Check for end confession command
+      const normalizedContent = message.content.toLowerCase().trim();
+      if (normalizedContent === 'bocchi end confession') {
+        await this.endConfessionSession(message.guild, activeSession.id, activeSession.booth_channel_id, message.author.id);
+        
+        if (message.channel.isSendable()) {
+          await message.reply('yes my child. you may go now.');
+        }
+        return;
+      }
+
+      // Update confession text (append to existing)
+      const currentText = activeSession.confession_text || '';
+      const newText = currentText ? `${currentText}\n${message.content}` : message.content;
+      await confessionService.updateConfessionText(activeSession.id, newText);
+
+      // Add Leave button to every message
+      const leaveButton = new ButtonBuilder()
+        .setCustomId(`confession_leave_${message.author.id}`)
+        .setLabel('🚪 Leave Confession Booth')
+        .setStyle(ButtonStyle.Danger);
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(leaveButton);
+
+      if (message.channel.isSendable()) {
+        await message.channel.send({
+          content: '...',
+          components: [row]
+        });
+      }
+
+      // Process as normal AI response (isolated conversation)
+      // This will be handled by the normal message flow after this check
+    } catch (error) {
+      logger.error('Failed to handle booth message', {
         error: error instanceof Error ? error.message : String(error)
       });
     }

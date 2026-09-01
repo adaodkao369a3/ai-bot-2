@@ -7,6 +7,7 @@ import { Client, GatewayIntentBits, ActivityType } from 'discord.js';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
 import { getNicknameService } from '../services/nickname';
+import { getConfessionService } from '../services/confession';
 
 export function createDiscordClient(): Client {
   // Create client with intents required for message-based interaction
@@ -33,6 +34,39 @@ export function createDiscordClient(): Client {
     if (client.user) {
       await client.user.setActivity('hoping nobody notices me...', { type: ActivityType.Watching });
     }
+
+    // Recover active confession sessions
+    const confessionService = getConfessionService();
+    for (const [guildId, guild] of client.guilds.cache) {
+      try {
+        await confessionService.recoverActiveSessions(guild, async (session) => {
+          // Handle expired session
+          try {
+            const boothChannel = await guild.channels.fetch(session.booth_channel_id);
+            if (boothChannel && boothChannel.type === 0) { // GuildText
+              await confessionService.revokeBoothAccess(boothChannel, session.user_id);
+            }
+            
+            // Publish confession if there's content
+            if (session.confession_text && session.confession_text.trim().length > 0) {
+              const confessionNumber = await confessionService.getNextConfessionNumber(guildId);
+              await confessionService.saveConfession(guildId, confessionNumber, session.confession_text);
+              await confessionService.publishConfession(guild, confessionNumber, session.confession_text);
+            }
+          } catch (error) {
+            logger.error('Failed to handle expired confession session during recovery', {
+              sessionId: session.id,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        });
+      } catch (error) {
+        logger.error('Failed to recover confession sessions for guild', {
+          guildId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
   });
 
   // Handle incoming messages
@@ -43,6 +77,42 @@ export function createDiscordClient(): Client {
     }
     
     await messageRouter.handleMessage(message, client.user.id);
+  });
+
+  // Handle button interactions
+  client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
+    
+    const customId = interaction.customId;
+    
+    if (customId.startsWith('confession_enter_')) {
+      await interaction.deferReply();
+      // Create a mock message object for the handler
+      const mockMessage = {
+        guild: interaction.guild,
+        author: interaction.user,
+        channel: interaction.channel,
+        channelId: interaction.channelId,
+        reply: async (content: any) => {
+          await interaction.editReply(content);
+        }
+      } as any;
+      
+      await messageRouter.handleConfessionEnter(mockMessage);
+    } else if (customId.startsWith('confession_leave_')) {
+      await interaction.deferReply();
+      const mockMessage = {
+        guild: interaction.guild,
+        author: interaction.user,
+        channel: interaction.channel,
+        channelId: interaction.channelId,
+        reply: async (content: any) => {
+          await interaction.editReply(content);
+        }
+      } as any;
+      
+      await messageRouter.handleConfessionLeave(mockMessage);
+    }
   });
 
   // Track last used welcome message index to avoid immediate repetition
