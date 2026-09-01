@@ -1,26 +1,20 @@
 /**
  * Nickname service for Bocchi
- * Handles AI-powered nickname generation with uniqueness checking
+ * Handles random nickname generation with uniqueness checking
  */
 
 import { Guild, GuildMember } from 'discord.js';
-import { AIService } from './ai';
 import { logger } from '../utils/logger';
 import {
   FIRST_WORDS,
   SECOND_WORDS,
-  NICKNAME_TITLES,
-  NICKNAME_ADJECTIVES,
-  NICKNAME_NOUNS,
   DISCORD_NICKNAME_MAX_LENGTH,
   NICKNAME_MAX_GENERATION_ATTEMPTS
 } from '../config/nicknames';
 
 export class NicknameService {
-  private aiService: AIService;
-
-  constructor(aiService: AIService) {
-    this.aiService = aiService;
+  constructor() {
+    // No AI service needed - using random selection
   }
 
   /**
@@ -30,36 +24,29 @@ export class NicknameService {
    */
   async generateUniqueNickname(existingNicknames: Set<string>): Promise<string | null> {
     for (let attempt = 1; attempt <= NICKNAME_MAX_GENERATION_ATTEMPTS; attempt++) {
-      try {
-        const candidate = await this.generateNicknameCandidate();
-        
-        if (!candidate) {
-          logger.warn('AI returned empty nickname candidate');
-          continue;
-        }
+      const candidate = this.generateRandomNickname();
+      
+      if (!candidate) {
+        logger.warn('Failed to generate random nickname');
+        continue;
+      }
 
-        // Truncate to Discord's limit if needed
-        const truncated = this.truncateToDiscordLimit(candidate);
-        
-        // Check if nickname is already taken (case-insensitive)
-        if (!this.isNicknameTaken(truncated, existingNicknames)) {
-          logger.info('Generated unique nickname', { 
-            nickname: truncated, 
-            attempt 
-          });
-          return truncated;
-        }
-
-        logger.debug('Nickname already taken, retrying', { 
+      // Truncate to Discord's limit if needed
+      const truncated = this.truncateToDiscordLimit(candidate);
+      
+      // Check if nickname is already taken (case-insensitive)
+      if (!this.isNicknameTaken(truncated, existingNicknames)) {
+        logger.info('Generated unique nickname', { 
           nickname: truncated, 
           attempt 
         });
-      } catch (error) {
-        logger.warn('Nickname generation attempt failed', {
-          attempt,
-          error: error instanceof Error ? error.message : String(error)
-        });
+        return truncated;
       }
+
+      logger.debug('Nickname already taken, retrying', { 
+        nickname: truncated, 
+        attempt 
+      });
     }
 
     logger.error('Failed to generate unique nickname after all attempts');
@@ -67,70 +54,13 @@ export class NicknameService {
   }
 
   /**
-   * Generate a single nickname candidate using AI
-   * Uses a small, dedicated request with low token limits
+   * Generate a random nickname by combining two words
+   * Simple deterministic approach: first + second
    */
-  private async generateNicknameCandidate(): Promise<string | null> {
-    const wordBankContext = this.buildWordBankContext();
-    
-    const prompt = `Generate ONE short, funny Discord nickname.
-
-Style: modern Discord/internet brainrot, memes, anime, gaming slang, viral phrases, absurd titles, stupid wordplay.
-
-Use these word banks as building blocks:
-${wordBankContext}
-
-Examples: Captain Dih, Chief Yapper, Dumguru, Gojo's Accountant, Doomscroll Sensei, Bocchi's Tax Auditor, Lord Braincell, Yap Titan, Netflix Final Boss.
-
-Output ONLY the nickname. No quotes, no explanation. Max 32 characters.`;
-
-    try {
-      const response = await this.aiService.generateResponse({
-        systemPrompt: 'Generate exactly one short Discord nickname per request.',
-        userMessage: prompt,
-        userName: 'nickname-generator',
-        maxTokens: 50 // Very low limit since we only need one short nickname
-      });
-
-      if (response.success && response.content) {
-        // Clean up the response - remove quotes, extra whitespace, etc.
-        const cleaned = response.content
-          .trim()
-          .replace(/^["']|["']$/g, '') // Remove surrounding quotes
-          .replace(/\s+/g, ' ') // Normalize whitespace
-          .trim();
-
-        return cleaned || null;
-      }
-
-      return null;
-    } catch (error) {
-      logger.error('AI nickname generation failed', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Build word bank context for the AI prompt
-   */
-  private buildWordBankContext(): string {
-    const sampleSize = 20; // Don't overwhelm the AI with all words
-    
-    const firstWordsSample = this.sampleArray(FIRST_WORDS, sampleSize);
-    const secondWordsSample = this.sampleArray(SECOND_WORDS, sampleSize);
-    const titlesSample = this.sampleArray(NICKNAME_TITLES, sampleSize);
-    const adjectivesSample = this.sampleArray(NICKNAME_ADJECTIVES, sampleSize);
-    const nounsSample = this.sampleArray(NICKNAME_NOUNS, sampleSize);
-
-    return `FIRST_WORDS (titles/ranks): ${firstWordsSample.join(', ')}
-SECOND_WORDS (absurd words): ${secondWordsSample.join(', ')}
-TITLES (honorifics): ${titlesSample.join(', ')}
-ADJECTIVES: ${adjectivesSample.join(', ')}
-NOUNS: ${nounsSample.join(', ')}
-
-You can combine these like: Captain + Dih, Chief + Yapper, Professor + Bonk, Lord + Braincell`;
+  private generateRandomNickname(): string {
+    const first = FIRST_WORDS[Math.floor(Math.random() * FIRST_WORDS.length)];
+    const second = SECOND_WORDS[Math.floor(Math.random() * SECOND_WORDS.length)];
+    return `${first} ${second}`;
   }
 
   /**
@@ -265,14 +195,6 @@ You can combine these like: Captain + Dih, Chief + Yapper, Professor + Bonk, Lor
   }
 
   /**
-   * Sample random elements from an array
-   */
-  private sampleArray<T>(array: T[], count: number): T[] {
-    const shuffled = [...array].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, Math.min(count, array.length));
-  }
-
-  /**
    * Generate and assign a nickname to a member (full flow)
    * This is a convenience method that builds the nickname set internally
    * For bulk operations, use the cached nickname set pattern instead
@@ -301,8 +223,8 @@ You can combine these like: Captain + Dih, Chief + Yapper, Professor + Bonk, Lor
 // Singleton instance will be initialized in messageRouter
 let nicknameService: NicknameService | null = null;
 
-export function initNicknameService(aiService: AIService): void {
-  nicknameService = new NicknameService(aiService);
+export function initNicknameService(): void {
+  nicknameService = new NicknameService();
 }
 
 export function getNicknameService(): NicknameService {

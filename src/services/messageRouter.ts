@@ -31,8 +31,8 @@ export class MessageRouter {
     this.aiService = createAIService(env.GROQ_API_KEY);
     // Inject AI service into memory extraction service
     memoryExtractionService.setAIService(this.aiService);
-    // Initialize nickname service
-    initNicknameService(this.aiService);
+    // Initialize nickname service (no longer needs AI service)
+    initNicknameService();
   }
 
   /**
