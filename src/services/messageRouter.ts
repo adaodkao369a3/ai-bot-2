@@ -1494,11 +1494,13 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
   async handleConfessionEnter(message: Message): Promise<void> {
     if (!message.guild) return;
 
+    const guild = message.guild;
+
     try {
       const confessionService = getConfessionService();
       
       // Try to create session atomically
-      const boothChannel = await confessionService.getOrCreateBoothChannel(message.guild);
+      const boothChannel = await confessionService.getOrCreateBoothChannel(guild);
       if (!boothChannel) {
         if (message.channel.isSendable()) {
           await message.reply('failed to create booth channel... try again later');
@@ -1507,7 +1509,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
 
       const session = await confessionService.createSession(
-        message.guild.id,
+        guild.id,
         message.author.id,
         boothChannel.id
       );
@@ -1537,14 +1539,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
 
       // Start timer
-      confessionService.startTimer(session.id, message.guild.id, message.author.id, async () => {
-        await this.endConfessionSession(message.guild, session.id, boothChannel.id, message.author.id);
+      confessionService.startTimer(session.id, guild.id, message.author.id, async () => {
+        await this.endConfessionSession(guild, session.id, boothChannel.id, message.author.id);
       });
 
       logger.info('Confession session started', {
         sessionId: session.id,
         userId: message.author.id,
-        guildId: message.guild.id
+        guildId: guild.id
       });
 
       if (message.channel.isSendable()) {
