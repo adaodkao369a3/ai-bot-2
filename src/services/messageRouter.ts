@@ -19,6 +19,7 @@ import { memeService } from './meme';
 import { mediaService } from './media';
 import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
+import { initNicknameService, getNicknameService } from './nickname';
 import { GUIDE_CHANNEL_ID } from '../config';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
@@ -30,6 +31,8 @@ export class MessageRouter {
     this.aiService = createAIService(env.GROQ_API_KEY);
     // Inject AI service into memory extraction service
     memoryExtractionService.setAIService(this.aiService);
+    // Initialize nickname service
+    initNicknameService(this.aiService);
   }
 
   /**
@@ -653,6 +656,27 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         await this.handleGuide(message);
         break;
 
+      case '~nickname':
+        // Only staff can use nickname commands
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+
+        if (parts[1] === 'all') {
+          await this.handleNicknameAll(message);
+        } else if (parts[1]) {
+          // Extract user ID from mention
+          const userIdMatch = parts[1].match(/<@!?(\d+)>/);
+          if (userIdMatch) {
+            await this.handleNicknameUser(message, userIdMatch[1]);
+          }
+        }
+        break;
+
       default:
         // Unknown command, ignore
         break;
@@ -897,6 +921,138 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       await message.reply('Failed to post the guide. Try again later.');
     }
   }
+  /**
+   * Handle ~nickname @user command
+   * Generate a new nickname for a specific user (admin/staff only)
+   */
+  private async handleNicknameUser(message: Message, targetUserId: string): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const nicknameService = getNicknameService();
+      const member = await message.guild.members.fetch(targetUserId);
+
+      if (!member) {
+        await message.reply({
+          content: 'Could not find that user.',
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return;
+      }
+
+      // Generate and assign new nickname (overwrites existing if present)
+      const success = await nicknameService.generateAndAssignNickname(member);
+
+      if (success) {
+        const targetName = await this.getGlobalUserName(message, targetUserId);
+        await message.reply({
+          content: `assigned a new nickname to ${targetName}`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        logger.info(`Nickname regenerated for user ${targetUserId} (${targetName}) by ${message.author.id}`);
+      } else {
+        await message.reply({
+          content: 'failed to generate a nickname... sorry...',
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to handle nickname user command', {
+        targetUserId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply({
+        content: 'something went wrong... try again later',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+    }
+  }
+
+  /**
+   * Handle ~nickname all command
+   * Generate nicknames for all members without existing nicknames (admin/staff only)
+   */
+  private async handleNicknameAll(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const nicknameService = getNicknameService();
+      const members = await message.guild.members.fetch();
+      
+      let processed = 0;
+      let skipped = 0;
+      let failed = 0;
+      let success = 0;
+
+      await message.reply({
+        content: 'processing all members without nicknames... this might take a while',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+
+      // Process members sequentially to avoid rate limit issues
+      for (const [memberId, member] of members) {
+        // Skip bots
+        if (member.user.bot) {
+          skipped++;
+          continue;
+        }
+
+        // Skip members who already have a nickname
+        if (nicknameService.hasNickname(member)) {
+          skipped++;
+          continue;
+        }
+
+        processed++;
+
+        try {
+          const assignSuccess = await nicknameService.generateAndAssignNickname(member);
+          
+          if (assignSuccess) {
+            success++;
+            // Small delay between operations to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          failed++;
+          logger.warn('Failed to assign nickname during bulk operation', {
+            userId: memberId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skipped} skipped`;
+      if (message.channel.isSendable()) {
+        await message.channel.send({
+          content: summary,
+          allowedMentions: { parse: [] }
+        });
+      }
+
+      logger.info('Bulk nickname operation completed', {
+        processed,
+        success,
+        failed,
+        skipped,
+        guildId: message.guild.id,
+        requestedBy: message.author.id
+      });
+    } catch (error) {
+      logger.error('Failed to handle nickname all command', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      if (message.channel.isSendable()) {
+        await message.channel.send({
+          content: 'something went wrong during the bulk operation... check logs',
+          allowedMentions: { parse: [] }
+        });
+      }
+    }
+  }
+
   /**
    * Discord User#displayName/globalName is the account-level display name,
    * not the server nickname and not the username.

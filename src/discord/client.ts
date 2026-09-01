@@ -6,6 +6,7 @@
 import { Client, GatewayIntentBits, ActivityType } from 'discord.js';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
+import { getNicknameService } from '../services/nickname';
 
 export function createDiscordClient(): Client {
   // Create client with intents required for message-based interaction
@@ -56,6 +57,27 @@ export function createDiscordClient(): Client {
 
     // Hardcoded welcome channel ID (stage floor)
     const WELCOME_CHANNEL_ID = '1526872609717747762';
+
+    // Assign nickname if member doesn't already have one
+    try {
+      const nicknameService = getNicknameService();
+      
+      if (!nicknameService.hasNickname(member)) {
+        logger.info('Assigning nickname to new member', {
+          userId: member.id,
+          username: member.user.tag
+        });
+        
+        await nicknameService.generateAndAssignNickname(member);
+      }
+    } catch (error) {
+      // Nickname assignment failure should not block the welcome message
+      logger.warn('Failed to assign nickname to new member', {
+        userId: member.id,
+        username: member.user.tag,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     // Bocchi-style welcome messages pool (with USER_MENTION placeholder)
     const welcomeMessageTemplates = [
