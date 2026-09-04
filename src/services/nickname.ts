@@ -14,6 +14,9 @@ import {
 } from '../config/nicknames';
 
 export class NicknameService {
+  private usedFirstWords: Set<string> = new Set();
+  private usedSecondWords: Set<string> = new Set();
+
   constructor() {
     // No AI service needed - using random selection
   }
@@ -22,6 +25,7 @@ export class NicknameService {
    * Generate a unique nickname for a member
    * Will retry until a unique nickname is found or max attempts reached
    * Uses cached nickname set to avoid repeated Discord API calls
+   * Prioritizes unused first and second words to ensure maximum uniqueness
    */
   async generateUniqueNickname(existingNicknames: Set<string>): Promise<string | null> {
     for (let attempt = 1; attempt <= NICKNAME_MAX_GENERATION_ATTEMPTS; attempt++) {
@@ -41,6 +45,12 @@ export class NicknameService {
           nickname: truncated, 
           attempt 
         });
+        
+        // Track the used words to ensure future uniqueness
+        const [first, second] = truncated.split(' ');
+        if (first) this.usedFirstWords.add(first.toLowerCase());
+        if (second) this.usedSecondWords.add(second.toLowerCase());
+        
         return truncated;
       }
 
@@ -56,11 +66,37 @@ export class NicknameService {
 
   /**
    * Generate a random nickname by combining two words
-   * Simple deterministic approach: first + second
+   * Prioritizes unused first and second words to ensure maximum uniqueness
+   * Only reuses words when all words have been used (when >100 members)
    */
   private generateRandomNickname(): string {
-    const first = FIRST_WORDS[Math.floor(Math.random() * FIRST_WORDS.length)];
-    const second = SECOND_WORDS[Math.floor(Math.random() * SECOND_WORDS.length)];
+    let first: string;
+    let second: string;
+
+    // Try to get an unused first word
+    const availableFirstWords = FIRST_WORDS.filter(word => 
+      !this.usedFirstWords.has(word.toLowerCase())
+    );
+
+    if (availableFirstWords.length > 0) {
+      first = availableFirstWords[Math.floor(Math.random() * availableFirstWords.length)];
+    } else {
+      // All first words have been used, pick randomly from all
+      first = FIRST_WORDS[Math.floor(Math.random() * FIRST_WORDS.length)];
+    }
+
+    // Try to get an unused second word
+    const availableSecondWords = SECOND_WORDS.filter(word => 
+      !this.usedSecondWords.has(word.toLowerCase())
+    );
+
+    if (availableSecondWords.length > 0) {
+      second = availableSecondWords[Math.floor(Math.random() * availableSecondWords.length)];
+    } else {
+      // All second words have been used, pick randomly from all
+      second = SECOND_WORDS[Math.floor(Math.random() * SECOND_WORDS.length)];
+    }
+
     return `${first} ${second}`;
   }
 
