@@ -1066,7 +1066,6 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       });
       
       let processed = 0;
-      let skippedOwnerRole = 0;
       let skippedBot = 0;
       let skippedSelf = 0;
       let skippedAlreadyHasNickname = 0;
@@ -1085,13 +1084,6 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         if (memberId === message.guild.members.me?.id) {
           skippedSelf++;
           logger.debug('Skipped Bocchi itself', { userId: memberId });
-          continue;
-        }
-
-        // Skip owner role members FIRST (before any other checks)
-        if (nicknameService.hasOwnerRole(member)) {
-          skippedOwnerRole++;
-          logger.debug('Skipped member due to owner role', { userId: memberId });
           continue;
         }
 
@@ -1139,7 +1131,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
       }
 
-      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedOwnerRole} skipped (owner role), ${skippedBot} skipped (bot), ${skippedSelf} skipped (self), ${skippedAlreadyHasNickname} skipped (has nickname), ${skippedHierarchy} skipped (role hierarchy)`;
+      const summary = `done... processed ${processed} members, ${success} successful, ${failed} failed, ${skippedBot} skipped (bot), ${skippedSelf} skipped (self), ${skippedAlreadyHasNickname} skipped (has nickname), ${skippedHierarchy} skipped (role hierarchy)`;
       if (message.channel.isSendable()) {
         await message.channel.send({
           content: summary,
@@ -1152,7 +1144,6 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         processed,
         success,
         failed,
-        skippedOwnerRole,
         skippedBot,
         skippedSelf,
         skippedAlreadyHasNickname,
