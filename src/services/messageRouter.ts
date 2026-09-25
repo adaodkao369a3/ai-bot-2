@@ -868,6 +868,33 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
     if (!message.guild) return;
 
     try {
+      // Show feature list if no arguments provided
+      if (args.length === 0) {
+        const features: Feature[] = ['youtube', 'confession', 'gif', 'meme'];
+        const featureStates = await Promise.all(
+          features.map(async (feature) => ({
+            name: feature.charAt(0).toUpperCase() + feature.slice(1),
+            enabled: await featureToggleService.isEnabled(message.guild.id, feature)
+          }))
+        );
+
+        const embed = new EmbedBuilder()
+          .setTitle('Feature Status')
+          .setColor(0x5865F2)
+          .setDescription('Current feature states for this server:')
+          .addFields(
+            featureStates.map(state => ({
+              name: state.name,
+              value: state.enabled ? '✅ ON' : '❌ OFF',
+              inline: true
+            }))
+          )
+          .setFooter({ text: 'Use ~features <feature> <on|off> to toggle' });
+
+        await message.reply({ embeds: [embed] });
+        return;
+      }
+
       if (args.length < 2) {
         await message.reply('usage: ~features <feature> <on|off> (available features: youtube, confession, gif, meme)');
         return;
