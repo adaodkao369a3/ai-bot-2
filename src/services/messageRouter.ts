@@ -21,6 +21,7 @@ import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
 import { initNicknameService, getNicknameService } from './nickname';
 import { initConfessionService, getConfessionService } from './confession';
+import { featureToggleService, Feature } from './featureToggle';
 import { GUIDE_CHANNEL_ID } from '../config';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
@@ -54,15 +55,8 @@ export class MessageRouter {
    * Check if message is a confession trigger
    */
   private isConfessionTrigger(content: string): boolean {
-    const lowerContent = content.toLowerCase();
-    const triggers = [
-      'i need to confess',
-      'confession time',
-      'i need to come clean',
-      'confess something',
-      'come clean'
-    ];
-    return triggers.some(trigger => lowerContent.includes(trigger));
+    const normalizedContent = content.toLowerCase().trim();
+    return normalizedContent === '.confess';
   }
 
   /**
@@ -100,6 +94,13 @@ export class MessageRouter {
 
       // Check for confession trigger
       if (this.isConfessionTrigger(content)) {
+        const confessionEnabled = await featureToggleService.isEnabled(guildId, 'confession');
+        if (!confessionEnabled) {
+          if (message.channel.isSendable()) {
+            await message.reply('confession feature is disabled in this server.');
+          }
+          return;
+        }
         await this.handleConfessionTrigger(message);
         return;
       }
@@ -135,9 +136,8 @@ export class MessageRouter {
       const isStaff = member ? permissionService.isStaff(member) : false;
 
       // Step 1: Check if Bocchi is enabled for this guild.
-      // Staff/admins bypass this gate.
       const botEnabled = await botStateService.isEnabled(guildId);
-      if (!botEnabled && !isStaff) {
+      if (!botEnabled) {
         logger.debug(`Bot disabled for guild ${guildId}, ignoring message`);
         return;
       }
@@ -434,8 +434,27 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
     conversationContext: string
   ): Promise<boolean> {
     const content = cleanContent.toLowerCase();
+    const guildId = message.guild?.id;
+
+    if (!guildId) {
+      return false;
+    }
 
     if (this.isMemeRequest(content)) {
+      const memeEnabled = await featureToggleService.isEnabled(guildId, 'meme');
+      if (!memeEnabled) {
+        const messages = [
+          'meme feature is disabled in this server.',
+          'can\'t do that, memes are disabled.',
+          'memes are turned off here.'
+        ];
+        await message.reply({
+          content: messages[Math.floor(Math.random() * messages.length)],
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return true;
+      }
+
       const category = this.extractMemeCategory(content);
       const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`, category);
       if (!meme) {
@@ -472,6 +491,20 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
     const gifAction = this.extractGifAction(content);
     if (gifAction) {
+      const gifEnabled = await featureToggleService.isEnabled(guildId, 'gif');
+      if (!gifEnabled) {
+        const messages = [
+          'gif feature is disabled in this server.',
+          'can\'t do that, gifs are disabled.',
+          'gifs are turned off here.'
+        ];
+        await message.reply({
+          content: messages[Math.floor(Math.random() * messages.length)],
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return true;
+      }
+
       const interactionResponse = await interactionPoolsService.getInteractionResponse(gifAction);
       if (!interactionResponse) {
         const messages = [
@@ -508,6 +541,20 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
     const youtubeQuery = this.extractYoutubeQuery(content);
     if (youtubeQuery) {
+      const youtubeEnabled = await featureToggleService.isEnabled(guildId, 'youtube');
+      if (!youtubeEnabled) {
+        const messages = [
+          'youtube feature is disabled in this server.',
+          'can\'t do that, youtube is disabled.',
+          'youtube is turned off here.'
+        ];
+        await message.reply({
+          content: messages[Math.floor(Math.random() * messages.length)],
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return true;
+      }
+
       const video = await mediaService.searchYoutube(youtubeQuery);
       if (!video) {
         const messages = [
@@ -664,6 +711,19 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
         break;
 
+      case '~features':
+        // Only staff can use ~features
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+        
+        await this.handleFeaturesCommand(message, parts.slice(1));
+        break;
+
       case '~bl':
         // Only staff can use blacklist commands
         if (!isStaff) {
@@ -798,6 +858,45 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         error: error instanceof Error ? error.message : String(error)
       });
       await message.reply('failed to stop... sorry...');
+    }
+  }
+
+  /**
+   * Handle ~features command
+   */
+  private async handleFeaturesCommand(message: Message, args: string[]): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      if (args.length < 2) {
+        await message.reply('usage: ~features <feature> <on|off> (available features: youtube, confession, gif, meme)');
+        return;
+      }
+
+      const feature = args[0] as Feature;
+      const state = args[1].toLowerCase();
+
+      if (!['youtube', 'confession', 'gif', 'meme'].includes(feature)) {
+        await message.reply('invalid feature. available features: youtube, confession, gif, meme');
+        return;
+      }
+
+      if (state !== 'on' && state !== 'off') {
+        await message.reply('invalid state. use: on or off');
+        return;
+      }
+
+      const enabled = state === 'on';
+      await featureToggleService.setEnabled(message.guild.id, feature, enabled);
+
+      const featureName = feature.charAt(0).toUpperCase() + feature.slice(1);
+      await message.reply(`${featureName} feature is now ${enabled ? 'enabled' : 'disabled'}.`);
+      logger.info(`Feature ${feature} ${enabled ? 'enabled' : 'disabled'} for guild ${message.guild.id} by ${message.author.id}`);
+    } catch (error) {
+      logger.error('Failed to toggle feature', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply('failed to toggle feature... sorry...');
     }
   }
 
@@ -1472,11 +1571,20 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(enterButton);
 
       if (message.channel.isSendable()) {
-        await message.reply({
+        const reply = await message.reply({
           content: response,
           components: [row],
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
+
+        // Set 30 second expiration for the button
+        setTimeout(async () => {
+          try {
+            await reply.edit({ components: [] });
+          } catch (error) {
+            // Message might have been deleted, ignore error
+          }
+        }, 30000);
       }
 
       logger.info('Confession booth offered', {

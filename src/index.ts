@@ -15,6 +15,7 @@ import { blacklistService } from './services/blacklist';
 import { rateLimitService } from './services/rateLimit';
 import { conversationContextService } from './services/conversationContext';
 import { memeService } from './services/meme';
+import { featureToggleService } from './services/featureToggle';
 
 async function main(): Promise<void> {
   let discordClient: ReturnType<typeof createDiscordClient> | null = null;
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
     logger.info('Initializing Bocchi services...');
     await botStateService.initialize();
     await blacklistService.initialize();
+    await featureToggleService.initialize();
     logger.info('Bocchi services initialized successfully');
 
     // Step 6: Initialize Discord connection

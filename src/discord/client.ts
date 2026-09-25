@@ -85,6 +85,18 @@ export function createDiscordClient(): Client {
       const customId = interaction.customId;
       
       if (customId.startsWith('confession_modal_')) {
+        // Extract the user ID from the customId
+        const expectedUserId = customId.replace('confession_modal_', '');
+        
+        // Only allow the user who triggered the button to click it
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({ 
+            content: 'This confession booth button is not for you.', 
+            ephemeral: true 
+          });
+          return;
+        }
+        
         // Show confession modal
         const modal = new ModalBuilder()
           .setCustomId(`confession_submit_${interaction.user.id}`)
