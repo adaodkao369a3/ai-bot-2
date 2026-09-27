@@ -867,6 +867,8 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
   private async handleFeaturesCommand(message: Message, args: string[]): Promise<void> {
     if (!message.guild) return;
 
+    const guildId = message.guild.id;
+
     try {
       // Show feature list if no arguments provided
       if (args.length === 0) {
@@ -874,7 +876,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         const featureStates = await Promise.all(
           features.map(async (feature) => ({
             name: feature.charAt(0).toUpperCase() + feature.slice(1),
-            enabled: await featureToggleService.isEnabled(message.guild.id, feature)
+            enabled: await featureToggleService.isEnabled(guildId, feature)
           }))
         );
 
@@ -914,11 +916,11 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
 
       const enabled = state === 'on';
-      await featureToggleService.setEnabled(message.guild.id, feature, enabled);
+      await featureToggleService.setEnabled(guildId, feature, enabled);
 
       const featureName = feature.charAt(0).toUpperCase() + feature.slice(1);
       await message.reply(`${featureName} feature is now ${enabled ? 'enabled' : 'disabled'}.`);
-      logger.info(`Feature ${feature} ${enabled ? 'enabled' : 'disabled'} for guild ${message.guild.id} by ${message.author.id}`);
+      logger.info(`Feature ${feature} ${enabled ? 'enabled' : 'disabled'} for guild ${guildId} by ${message.author.id}`);
     } catch (error) {
       logger.error('Failed to toggle feature', {
         error: error instanceof Error ? error.message : String(error)
