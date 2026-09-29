@@ -153,7 +153,7 @@ export class MessageRouter {
       }
 
       // Step 3: Check if message is addressing Bocchi
-      const isAddressing = await addressingService.isAddressingBot(message, botUserId);
+      const isAddressing = await addressingService.isAddressingBot(message, botUserId, guildId);
       if (!isAddressing) {
         return;
       }
@@ -186,7 +186,7 @@ export class MessageRouter {
       );
 
       // Step 7: Extract actual message content (remove bot name/mention)
-      const cleanContent = addressingService.extractContent(message, botUserId);
+      const cleanContent = await addressingService.extractContent(message, botUserId, guildId);
 
       // Step 7.5: Security check for user input
       const securityCheck = responseSanitizer.securityCheck(cleanContent);

@@ -6,15 +6,16 @@
 import { Message } from 'discord.js';
 import { BOT_NAME } from '../config';
 import { logger } from '../utils/logger';
+import { getPersonalityManager } from './personalityManager';
 
 export class AddressingService {
   /**
    * Check if a message is addressing Bocchi
    */
-  async isAddressingBot(message: Message, botUserId: string): Promise<boolean> {
+  async isAddressingBot(message: Message, botUserId: string, guildId: string): Promise<boolean> {
     return (
       this.isMention(message, botUserId) ||
-      this.isNameAddress(message, botUserId) ||
+      await this.isNameAddress(message, guildId) ||
       await this.isReplyToBot(message, botUserId)
     );
   }
@@ -27,10 +28,69 @@ export class AddressingService {
   }
 
   /**
-   * Check if message uses Bocchi's name
+   * Check if message uses the active character's invocation names
    */
-  isNameAddress(message: Message, _botUserId: string): boolean {
+  async isNameAddress(message: Message, guildId: string): Promise<boolean> {
     const content = message.content.toLowerCase();
+    
+    try {
+      const personalityManager = getPersonalityManager();
+      const character = await personalityManager.getActiveCharacter(guildId);
+      const invocationNames = character.invocationNames || [];
+
+      if (invocationNames.length === 0) {
+        // Fallback to legacy BOT_NAME if no invocation names configured
+        return this.matchesLegacyName(content);
+      }
+
+      // Common greetings that might precede the name
+      const greetings = ['hi', 'hey', 'hello', 'yo', 'sup', 'ay', 'ayy', 'oi'];
+      
+      // Check if message starts with invocation name (with space or punctuation)
+      const startsWithName = invocationNames.some(name => {
+        const lowerName = name.toLowerCase();
+        return content.startsWith(lowerName + ' ') || 
+               content.startsWith(lowerName + ',') || 
+               content.startsWith(lowerName + '!') || 
+               content.startsWith(lowerName + '?') ||
+               content === lowerName;
+      });
+
+      // Check if message starts with greeting followed by invocation name
+      const greetingThenName = invocationNames.some(name => {
+        const lowerName = name.toLowerCase();
+        return greetings.some(greeting => {
+          const pattern = `^${greeting}\\s*${lowerName}[\\s,!?]*`;
+          const regex = new RegExp(pattern, 'i');
+          return regex.test(content);
+        });
+      });
+
+      // Check if message contains invocation name with word boundaries
+      // but only at the beginning or after a short greeting to avoid false positives
+      const containsNameEarly = invocationNames.some(name => {
+        const lowerName = name.toLowerCase();
+        // Match name at start or after greeting, with word boundaries
+        const pattern = `^(?:${greetings.join('|')})?\\s*\\b${lowerName}\\b`;
+        const regex = new RegExp(pattern, 'i');
+        return regex.test(content);
+      });
+
+      return startsWithName || greetingThenName || containsNameEarly;
+    } catch (error) {
+      logger.error('Failed to get active character for name address check', {
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      // Fallback to legacy name matching on error
+      return this.matchesLegacyName(content);
+    }
+  }
+
+  /**
+   * Legacy name matching fallback (for backwards compatibility)
+   */
+  private matchesLegacyName(content: string): boolean {
     const botNameVariations = [
       BOT_NAME,
       'bocchi chan',
@@ -46,7 +106,9 @@ export class AddressingService {
     );
 
     // Check if message contains bot name with word boundaries
-    const containsName = botNameVariations.some(name => {
+    // Sort by length (longest first) to handle compound names properly
+    const sortedVariations = [...botNameVariations].sort((a, b) => b.length - a.length);
+    const containsName = sortedVariations.some(name => {
       const regex = new RegExp(`\\b${name}\\b`, 'i');
       return regex.test(content);
     });
@@ -75,18 +137,62 @@ export class AddressingService {
   }
 
   /**
-   * Extract the actual message content without Bocchi's name/mention
+   * Extract the actual message content without bot's name/mention
    */
-  extractContent(message: Message, botUserId: string): string {
+  async extractContent(message: Message, botUserId: string, guildId: string): Promise<string> {
     let content = message.content;
 
-    // Remove bocchi mention (specific to this bot user ID)
+    // Remove bot mention (specific to this bot user ID)
     if (this.isMention(message, botUserId)) {
       const mentionRegex = new RegExp(`<@!?${botUserId}>`, 'g');
       content = content.replace(mentionRegex, '').trim();
     }
 
-    // Remove bot name variations at the start
+    // Remove active character's invocation names at the start
+    try {
+      const personalityManager = getPersonalityManager();
+      const character = await personalityManager.getActiveCharacter(guildId);
+      const invocationNames = character.invocationNames || [];
+
+      if (invocationNames.length > 0) {
+        const greetings = ['hi', 'hey', 'hello', 'yo', 'sup', 'ay', 'ayy', 'oi'];
+        
+        // Sort by length (longest first) to handle compound names properly
+        const sortedNames = [...invocationNames].sort((a, b) => b.length - a.length);
+        
+        for (const name of sortedNames) {
+          const lowerName = name.toLowerCase();
+          
+          // Remove name at start with punctuation
+          let regex = new RegExp(`^${lowerName}[\\s,!?]*`, 'i');
+          content = content.replace(regex, '').trim();
+          
+          // Remove greeting + name pattern
+          for (const greeting of greetings) {
+            regex = new RegExp(`^${greeting}\\s*${lowerName}[\\s,!?]*`, 'i');
+            content = content.replace(regex, '').trim();
+          }
+        }
+      } else {
+        // Fallback to legacy name removal
+        content = this.removeLegacyNames(content);
+      }
+    } catch (error) {
+      logger.error('Failed to get active character for content extraction', {
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      // Fallback to legacy name removal on error
+      content = this.removeLegacyNames(content);
+    }
+
+    return content;
+  }
+
+  /**
+   * Legacy name removal fallback
+   */
+  private removeLegacyNames(content: string): string {
     const botNameVariations = [
       BOT_NAME,
       'bocchi chan',
@@ -95,6 +201,9 @@ export class AddressingService {
       'hitori gotoh',
       'gotoh hitori'
     ];
+
+    // Sort by length (longest first) to handle compound names properly
+    botNameVariations.sort((a, b) => b.length - a.length);
 
     for (const name of botNameVariations) {
       const regex = new RegExp(`^${name}[\\s,!?]*`, 'i');

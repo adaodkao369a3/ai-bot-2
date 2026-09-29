@@ -40,6 +40,8 @@ export interface Character {
   nickname: string;
   /** Avatar asset filenames (empty = no avatar change) */
   avatarAssets: string[];
+  /** Invocation names - names users can use to address this character */
+  invocationNames: string[];
   /** Emoji map for character-specific emoji usage */
   emojiMap: Record<EmojiKey, string[]>;
   /** Cooldown messages for rate limiting (function to support timestamp formatting) */
