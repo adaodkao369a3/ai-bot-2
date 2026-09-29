@@ -3,7 +3,7 @@
  * Central message handling pipeline that coordinates all services
  */
 
-import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction } from 'discord.js';
+import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, StringSelectMenuInteraction } from 'discord.js';
 import { botStateService } from './botState';
 import { blacklistService } from './blacklist';
 import { rateLimitService } from './rateLimit';
@@ -13,6 +13,8 @@ import { memoryExtractionService } from './memoryExtraction';
 import { permissionService } from './permissions';
 import { addressingService } from './addressing';
 import { personalityService } from './personality';
+import { getPersonalityManager } from './personalityManager';
+import { getAllCharacters, getCharacter } from '../config/characters';
 import { AIService, createAIService } from './ai';
 import { responseSanitizer } from './responseSanitizer';
 import { memeService } from './meme';
@@ -162,7 +164,7 @@ export class MessageRouter {
         if (!rateLimitCheck.allowed) {
           logger.debug(`User ${userId} is rate limited`);
           if (rateLimitCheck.resetTime) {
-            const cooldownMessage = personalityService.getCooldownMessage(rateLimitCheck.resetTime);
+            const cooldownMessage = await personalityService.getCooldownMessage(guildId, rateLimitCheck.resetTime);
             await message.reply(cooldownMessage);
           }
           return;
@@ -330,7 +332,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       let aiResponse;
       try {
         aiResponse = await this.aiService.generateResponse({
-          systemPrompt: personalityService.getSystemPrompt(),
+          systemPrompt: await personalityService.getSystemPrompt(guildId),
           userMessage: cleanContent,
           conversationContext,
           memoryContext,
@@ -370,7 +372,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         logger.info(`Bocchi responded to user ${userId} in guild ${guildId}`);
       } else {
         // AI failed, send error message
-        const errorMessage = personalityService.getErrorMessage();
+        const errorMessage = await personalityService.getErrorMessage(guildId);
         await message.reply({
           content: errorMessage,
           allowedMentions: {
@@ -805,6 +807,19 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
             await this.handleNicknameUser(message, userIdMatch[1]);
           }
         }
+        break;
+
+      case '~personality':
+        // Only staff can use personality command
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+
+        await this.handlePersonalityCommand(message);
         break;
 
       default:
@@ -1753,6 +1768,126 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
     } catch (error) {
       logger.error('Failed to handle confession leave', {
         error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Handle ~personality command
+   * Shows a select menu with available personalities
+   */
+  private async handlePersonalityCommand(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const characters = getAllCharacters();
+
+      if (characters.length === 0) {
+        await message.reply({
+          content: 'no personalities available right now...',
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return;
+      }
+
+      // Create select menu options
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`personality_select_${message.author.id}`)
+        .setPlaceholder('Choose a personality...');
+
+      for (const character of characters) {
+        selectMenu.addOptions(
+          new StringSelectMenuOptionBuilder()
+            .setLabel(character.name)
+            .setDescription(character.description)
+            .setValue(character.id)
+        );
+      }
+
+      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+      await message.reply({
+        content: 'choose a personality...',
+        components: [row],
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+
+      logger.info(`Personality selector shown to user ${message.author.id} in guild ${message.guild.id}`);
+    } catch (error) {
+      logger.error('Failed to show personality selector', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply({
+        content: 'failed to show personality selector... sorry...',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+    }
+  }
+
+  /**
+   * Handle personality selection from select menu
+   * This is called from the interaction handler in client.ts
+   */
+  async handlePersonalitySelect(interaction: StringSelectMenuInteraction): Promise<void> {
+    try {
+      // Verify the user who selected is the same who triggered the command
+      const customId = interaction.customId;
+      const expectedUserId = customId.replace('personality_select_', '');
+
+      if (interaction.user.id !== expectedUserId) {
+        await interaction.reply({
+          content: 'this personality selector is not for you...',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const selectedPersonalityId = interaction.values[0];
+      const character = getCharacter(selectedPersonalityId);
+
+      if (!character) {
+        await interaction.reply({
+          content: 'invalid personality selection...',
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (!interaction.guild) {
+        await interaction.reply({
+          content: 'this can only be used in a server...',
+          ephemeral: true
+        });
+        return;
+      }
+
+      // Set the personality
+      const manager = getPersonalityManager();
+      const result = await manager.setPersonality(
+        interaction.guild.id,
+        selectedPersonalityId,
+        interaction.client
+      );
+
+      if (result.success) {
+        await interaction.reply({
+          content: `personality set to ${character.name}...`,
+          ephemeral: true
+        });
+        logger.info(`Personality set to ${selectedPersonalityId} by user ${interaction.user.id} in guild ${interaction.guild.id}`);
+      } else {
+        await interaction.reply({
+          content: `failed to set personality: ${result.error}...`,
+          ephemeral: true
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to handle personality selection', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await interaction.reply({
+        content: 'something went wrong... sorry...',
+        ephemeral: true
       });
     }
   }

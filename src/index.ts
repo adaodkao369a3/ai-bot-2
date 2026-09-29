@@ -16,6 +16,9 @@ import { rateLimitService } from './services/rateLimit';
 import { conversationContextService } from './services/conversationContext';
 import { memeService } from './services/meme';
 import { featureToggleService } from './services/featureToggle';
+import { initPersonalityManager } from './services/personalityManager';
+// Import character definitions to register them
+import './config/characterDefinitions';
 
 async function main(): Promise<void> {
   let discordClient: ReturnType<typeof createDiscordClient> | null = null;
@@ -69,6 +72,11 @@ async function main(): Promise<void> {
     discordClient = createDiscordClient();
     await connectDiscord(discordClient, env.DISCORD_TOKEN);
     healthTracker.setDiscordReady(true);
+
+    // Step 6.5: Initialize personality manager (requires Discord client to be ready)
+    const personalityManager = initPersonalityManager(discordClient);
+    await personalityManager.initialize(discordClient);
+    logger.info('Personality manager initialized');
 
     // Step 7: Bocchi is ready
     healthTracker.setInitialized(true);

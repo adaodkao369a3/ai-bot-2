@@ -3,7 +3,7 @@
  * Creates Discord client with appropriate intents for planned functionality
  */
 
-import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuInteraction } from 'discord.js';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
 import { getNicknameService } from '../services/nickname';
@@ -148,6 +148,12 @@ export function createDiscordClient(): Client {
         } as any;
         
         await messageRouter.handleConfessionSubmit(mockMessage, confessionText);
+      }
+    } else if (interaction.isStringSelectMenu()) {
+      const customId = interaction.customId;
+
+      if (customId.startsWith('personality_select_')) {
+        await messageRouter.handlePersonalitySelect(interaction);
       }
     }
   });
