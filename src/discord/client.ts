@@ -149,12 +149,6 @@ export function createDiscordClient(): Client {
         
         await messageRouter.handleConfessionSubmit(mockMessage, confessionText);
       }
-    } else if (interaction.isStringSelectMenu()) {
-      const customId = interaction.customId;
-
-      if (customId.startsWith('personality_select_')) {
-        await messageRouter.handlePersonalitySelect(interaction);
-      }
     }
   });
 

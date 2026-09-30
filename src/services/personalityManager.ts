@@ -25,6 +25,7 @@ interface PersonalitySelectionRow {
 export class PersonalityManager {
   private currentPersonalities: Map<string, string> = new Map(); // guild_id -> personality_id
   private selectedAvatars: Map<string, string | null> = new Map(); // guild_id -> avatar_filename
+  private usedAvatars: Map<string, Set<string>> = new Map(); // guild_id -> set of used avatar filenames
   private initialized = false;
 
   /**
@@ -47,6 +48,7 @@ export class PersonalityManager {
       for (const row of rows) {
         this.currentPersonalities.set(row.guild_id, row.personality_id);
         this.selectedAvatars.set(row.guild_id, row.selected_avatar_filename);
+        this.usedAvatars.set(row.guild_id, new Set()); // Initialize empty set for each guild
 
         // Apply personality to guild if client is ready
         if (client && client.isReady()) {
@@ -147,6 +149,7 @@ export class PersonalityManager {
       // Update cache
       this.currentPersonalities.set(guildId, personalityId);
       this.selectedAvatars.set(guildId, null);
+      this.usedAvatars.set(guildId, new Set()); // Reset used avatars when personality changes
 
       // Apply personality to guild
       if (client.isReady()) {
@@ -197,8 +200,30 @@ export class PersonalityManager {
     // Apply avatar if assets are available
     if (character.avatarAssets.length > 0) {
       try {
-        // Use the selected avatar if provided, otherwise pick randomly
-        const selectedAvatar = avatarFilename || character.avatarAssets[Math.floor(Math.random() * character.avatarAssets.length)];
+        let selectedAvatar: string;
+
+        if (avatarFilename) {
+          // Use the provided avatar
+          selectedAvatar = avatarFilename;
+        } else {
+          // Pick a random avatar that hasn't been used yet
+          const guildUsedAvatars = this.usedAvatars.get(guild.id) || new Set();
+          const availableAvatars = character.avatarAssets.filter(avatar => !guildUsedAvatars.has(avatar));
+
+          if (availableAvatars.length === 0) {
+            // All avatars have been used, reset and pick randomly
+            guildUsedAvatars.clear();
+            selectedAvatar = character.avatarAssets[Math.floor(Math.random() * character.avatarAssets.length)];
+          } else {
+            // Pick from available avatars
+            selectedAvatar = availableAvatars[Math.floor(Math.random() * availableAvatars.length)];
+          }
+
+          // Mark this avatar as used
+          guildUsedAvatars.add(selectedAvatar);
+          this.usedAvatars.set(guild.id, guildUsedAvatars);
+        }
+
         const avatarPath = path.join(process.cwd(), 'assets', 'avatars', selectedAvatar);
 
         // Check if file exists
@@ -284,8 +309,42 @@ export class PersonalityManager {
   clearCache(): void {
     this.currentPersonalities.clear();
     this.selectedAvatars.clear();
+    this.usedAvatars.clear();
     this.initialized = false;
     logger.debug('Personality manager cache cleared');
+  }
+
+  /**
+   * Rotate to the next random avatar for the current personality
+   */
+  async rotateAvatar(guildId: string, client: Client): Promise<{ success: boolean; error?: string }> {
+    try {
+      const personalityId = await this.getActivePersonalityId(guildId);
+      const character = getCharacter(personalityId);
+
+      if (!character) {
+        return { success: false, error: 'Character not found' };
+      }
+
+      if (character.avatarAssets.length === 0) {
+        return { success: false, error: 'No avatars available for this personality' };
+      }
+
+      // Apply personality with null avatar to trigger random selection
+      if (client.isReady()) {
+        const guild = await client.guilds.fetch(guildId);
+        await this.applyPersonalityToGuild(guild, personalityId, null);
+      }
+
+      logger.info(`Avatar rotated for guild ${guildId}`);
+      return { success: true };
+    } catch (error) {
+      logger.error('Failed to rotate avatar', {
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return { success: false, error: 'Failed to rotate avatar' };
+    }
   }
 }
 

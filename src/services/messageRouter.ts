@@ -3,7 +3,7 @@
  * Central message handling pipeline that coordinates all services
  */
 
-import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, StringSelectMenuInteraction } from 'discord.js';
+import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction } from 'discord.js';
 import { botStateService } from './botState';
 import { blacklistService } from './blacklist';
 import { rateLimitService } from './rateLimit';
@@ -14,7 +14,7 @@ import { permissionService } from './permissions';
 import { addressingService } from './addressing';
 import { personalityService } from './personality';
 import { getPersonalityManager } from './personalityManager';
-import { getAllCharacters, getCharacter } from '../config/characters';
+import { getAllCharacters } from '../config/characters';
 import { AIService, createAIService } from './ai';
 import { responseSanitizer } from './responseSanitizer';
 import { memeService } from './meme';
@@ -1774,7 +1774,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
   /**
    * Handle ~personality command
-   * Shows a select menu with available personalities
+   * Accepts personality name as argument and directly sets it
    */
   private async handlePersonalityCommand(message: Message): Promise<void> {
     if (!message.guild) return;
@@ -1790,73 +1790,30 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         return;
       }
 
-      // Create select menu options
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`personality_select_${message.author.id}`)
-        .setPlaceholder('Choose a personality...');
+      // Extract personality name from command
+      const args = message.content.split(' ').slice(1);
+      const personalityName = args.join(' ').trim();
 
-      for (const character of characters) {
-        selectMenu.addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel(character.name)
-            .setDescription(character.description)
-            .setValue(character.id)
-        );
-      }
-
-      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-
-      await message.reply({
-        content: 'choose a personality...',
-        components: [row],
-        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
-      });
-
-      logger.info(`Personality selector shown to user ${message.author.id} in guild ${message.guild.id}`);
-    } catch (error) {
-      logger.error('Failed to show personality selector', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-      await message.reply({
-        content: 'failed to show personality selector... sorry...',
-        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
-      });
-    }
-  }
-
-  /**
-   * Handle personality selection from select menu
-   * This is called from the interaction handler in client.ts
-   */
-  async handlePersonalitySelect(interaction: StringSelectMenuInteraction): Promise<void> {
-    try {
-      // Verify the user who selected is the same who triggered the command
-      const customId = interaction.customId;
-      const expectedUserId = customId.replace('personality_select_', '');
-
-      if (interaction.user.id !== expectedUserId) {
-        await interaction.reply({
-          content: 'this personality selector is not for you...',
-          ephemeral: true
+      if (!personalityName) {
+        // Show available personalities if no name provided
+        const personalityList = characters.map(c => `• **${c.name}** - ${c.description}`).join('\n');
+        await message.reply({
+          content: `available personalities:\n${personalityList}\n\nusage: ~personality <name>`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return;
       }
 
-      const selectedPersonalityId = interaction.values[0];
-      const character = getCharacter(selectedPersonalityId);
+      // Find character by name (case-insensitive)
+      const character = characters.find(c =>
+        c.name.toLowerCase() === personalityName.toLowerCase() ||
+        c.id.toLowerCase() === personalityName.toLowerCase()
+      );
 
       if (!character) {
-        await interaction.reply({
-          content: 'invalid personality selection...',
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (!interaction.guild) {
-        await interaction.reply({
-          content: 'this can only be used in a server...',
-          ephemeral: true
+        await message.reply({
+          content: `personality "${personalityName}" not found... type ~personality to see available options`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return;
       }
@@ -1864,30 +1821,30 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       // Set the personality
       const manager = getPersonalityManager();
       const result = await manager.setPersonality(
-        interaction.guild.id,
-        selectedPersonalityId,
-        interaction.client
+        message.guild.id,
+        character.id,
+        message.client
       );
 
       if (result.success) {
-        await interaction.reply({
-          content: `personality set to ${character.name}...`,
-          ephemeral: true
+        await message.reply({
+          content: `personality set to **${character.name}**...`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
-        logger.info(`Personality set to ${selectedPersonalityId} by user ${interaction.user.id} in guild ${interaction.guild.id}`);
+        logger.info(`Personality set to ${character.id} by user ${message.author.id} in guild ${message.guild.id}`);
       } else {
-        await interaction.reply({
+        await message.reply({
           content: `failed to set personality: ${result.error}...`,
-          ephemeral: true
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
       }
     } catch (error) {
-      logger.error('Failed to handle personality selection', {
+      logger.error('Failed to handle personality command', {
         error: error instanceof Error ? error.message : String(error)
       });
-      await interaction.reply({
+      await message.reply({
         content: 'something went wrong... sorry...',
-        ephemeral: true
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
     }
   }
