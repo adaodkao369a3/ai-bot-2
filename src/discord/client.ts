@@ -34,7 +34,7 @@ export function createDiscordClient(): Client {
     
     // Set bot status to describe what it does
     if (client.user) {
-      await client.user.setActivity('hoping nobody notices me...', { type: ActivityType.Watching });
+      await client.user.setActivity('meow...', { type: ActivityType.Watching });
     }
 
     // Recover active confession sessions
