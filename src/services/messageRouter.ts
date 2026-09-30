@@ -3,7 +3,7 @@
  * Central message handling pipeline that coordinates all services
  */
 
-import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction } from 'discord.js';
+import { Message, GuildMember, Guild, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ModalSubmitInteraction, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { botStateService } from './botState';
 import { blacklistService } from './blacklist';
 import { rateLimitService } from './rateLimit';
@@ -1774,7 +1774,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
   /**
    * Handle ~personality command
-   * Accepts personality name as argument and directly sets it
+   * Shows dropdown menu for personality selection
    */
   private async handlePersonalityCommand(message: Message): Promise<void> {
     if (!message.guild) return;
@@ -1795,10 +1795,25 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       const personalityName = args.join(' ').trim();
 
       if (!personalityName) {
-        // Show available personalities if no name provided
-        const personalityList = characters.map(c => `• **${c.name}** - ${c.description}`).join('\n');
+        // Show dropdown menu for personality selection
+        const select = new StringSelectMenuBuilder()
+          .setCustomId(`personality_select_${message.author.id}`)
+          .setPlaceholder('Choose a personality...');
+
+        for (const character of characters) {
+          select.addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel(character.name)
+              .setDescription(character.description)
+              .setValue(character.id)
+          );
+        }
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
+
         await message.reply({
-          content: `available personalities:\n${personalityList}\n\nusage: ~personality <name>`,
+          content: 'select a personality...',
+          components: [row],
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return;

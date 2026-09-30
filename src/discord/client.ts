@@ -3,11 +3,13 @@
  * Creates Discord client with appropriate intents for planned functionality
  */
 
-import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuInteraction } from 'discord.js';
+import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuInteraction, StringSelectMenuBuilder } from 'discord.js';
+import { Character, getAllCharacters } from '../config/characters';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
 import { getNicknameService } from '../services/nickname';
 import { getConfessionService } from '../services/confession';
+import { getPersonalityManager } from '../services/personalityManager';
 
 export function createDiscordClient(): Client {
   // Create client with intents required for message-based interaction
@@ -131,12 +133,12 @@ export function createDiscordClient(): Client {
       }
     } else if (interaction.isModalSubmit()) {
       const customId = interaction.customId;
-      
+
       if (customId.startsWith('confession_submit_')) {
         const confessionText = interaction.fields.getTextInputValue('confession_text');
-        
+
         await interaction.deferReply();
-        
+
         const mockMessage = {
           guild: interaction.guild,
           author: interaction.user,
@@ -146,8 +148,57 @@ export function createDiscordClient(): Client {
             await interaction.editReply(content);
           }
         } as any;
-        
+
         await messageRouter.handleConfessionSubmit(mockMessage, confessionText);
+      }
+    } else if (interaction.isStringSelectMenu()) {
+      const customId = interaction.customId;
+
+      if (customId.startsWith('personality_select_')) {
+        const expectedUserId = customId.replace('personality_select_', '');
+
+        // Only allow the user who triggered the command to select
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this dropdown is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const personalityId = interaction.values[0];
+
+        const characters = getAllCharacters();
+        const character = characters.find((c: Character) => c.id === personalityId);
+
+        if (!character) {
+          await interaction.update({
+            content: 'something went wrong finding that personality...',
+            components: []
+          });
+          return;
+        }
+
+        // Set the personality
+        const manager = getPersonalityManager();
+        const result = await manager.setPersonality(
+          interaction.guildId!,
+          character.id,
+          interaction.client
+        );
+
+        if (result.success) {
+          await interaction.update({
+            content: `personality set to **${character.name}**...`,
+            components: []
+          });
+          logger.info(`Personality set to ${character.id} by user ${interaction.user.id} in guild ${interaction.guildId}`);
+        } else {
+          await interaction.update({
+            content: `failed to set personality: ${result.error}...`,
+            components: []
+          });
+        }
       }
     }
   });
