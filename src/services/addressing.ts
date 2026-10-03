@@ -7,6 +7,7 @@ import { Message } from 'discord.js';
 import { BOT_NAME } from '../config';
 import { logger } from '../utils/logger';
 import { getPersonalityManager } from './personalityManager';
+import { getAllCharacters, Character } from '../config/characters';
 
 export class AddressingService {
   /**
@@ -25,6 +26,69 @@ export class AddressingService {
    */
   isMention(message: Message, botUserId: string): boolean {
     return message.mentions.users.has(botUserId);
+  }
+
+  /**
+   * Check if message is addressing a different personality than the current one
+   * Returns the addressed character if different, null otherwise
+   */
+  async isAddressingDifferentPersonality(message: Message, guildId: string): Promise<Character | null> {
+    const content = message.content.toLowerCase();
+
+    try {
+      const personalityManager = getPersonalityManager();
+      const activeCharacter = await personalityManager.getActiveCharacter(guildId);
+      const allCharacters = getAllCharacters();
+
+      // Check if message is addressing any character
+      for (const character of allCharacters) {
+        const invocationNames = character.invocationNames || [];
+        if (invocationNames.length === 0) continue;
+
+        // Check if message starts with or contains this character's name
+        const greetings = ['hi', 'hey', 'hello', 'yo', 'sup', 'ay', 'ayy', 'oi'];
+
+        const startsWithName = invocationNames.some(name => {
+          const lowerName = name.toLowerCase();
+          return content.startsWith(lowerName + ' ') ||
+                 content.startsWith(lowerName + ',') ||
+                 content.startsWith(lowerName + '!') ||
+                 content.startsWith(lowerName + '?') ||
+                 content === lowerName;
+        });
+
+        const greetingThenName = invocationNames.some(name => {
+          const lowerName = name.toLowerCase();
+          return greetings.some(greeting => {
+            const pattern = `^${greeting}\\s*${lowerName}[\\s,!?]*`;
+            const regex = new RegExp(pattern, 'i');
+            return regex.test(content);
+          });
+        });
+
+        const containsNameEarly = invocationNames.some(name => {
+          const lowerName = name.toLowerCase();
+          const pattern = `^(?:${greetings.join('|')})?\\s*\\b${lowerName}\\b`;
+          const regex = new RegExp(pattern, 'i');
+          return regex.test(content);
+        });
+
+        if (startsWithName || greetingThenName || containsNameEarly) {
+          // If this is not the active character, return it
+          if (character.id !== activeCharacter.id) {
+            return character;
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      logger.error('Failed to check for different personality address', {
+        guildId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
   }
 
   /**

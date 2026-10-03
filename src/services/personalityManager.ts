@@ -300,7 +300,14 @@ export class PersonalityManager {
    */
   async getSystemPrompt(guildId: string): Promise<string> {
     const character = await this.getActiveCharacter(guildId);
-    return character.systemPrompt;
+    const basePrompt = character.systemPrompt;
+
+    // Append character world context if available
+    if (character.characterWorld && character.characterWorld.trim()) {
+      return `${basePrompt}\n\n=== CHARACTER WORLD CONTEXT ===\n${character.characterWorld}\n=== END CHARACTER WORLD ===`;
+    }
+
+    return basePrompt;
   }
 
   /**

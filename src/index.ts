@@ -17,6 +17,8 @@ import { conversationContextService } from './services/conversationContext';
 import { memeService } from './services/meme';
 import { featureToggleService } from './services/featureToggle';
 import { initPersonalityManager } from './services/personalityManager';
+import { getConfessionService } from './services/confession';
+import { getConfessionBoothConversationService } from './services/confessionBoothConversation';
 // Import character definitions to register them
 import './config/characterDefinitions';
 
@@ -39,11 +41,30 @@ async function main(): Promise<void> {
         await disconnectDiscord(discordClient);
       }
       await disconnectPool();
-      
+
       // Shutdown services with cleanup tasks
       rateLimitService.shutdown();
       conversationContextService.shutdown();
       memeService.clearAll();
+
+      // Cleanup confession services
+      try {
+        const confessionService = getConfessionService();
+        confessionService.cleanup();
+      } catch (error) {
+        logger.warn('Failed to cleanup confession service during shutdown', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+
+      try {
+        const boothConversationService = getConfessionBoothConversationService();
+        boothConversationService.cleanup();
+      } catch (error) {
+        logger.warn('Failed to cleanup confession booth conversation service during shutdown', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     });
 
     // Step 4: Initialize PostgreSQL connection pool (Supabase-hosted Postgres)

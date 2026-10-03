@@ -7,9 +7,9 @@ import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder
 import { Character, getAllCharacters } from '../config/characters';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
-import { getNicknameService } from '../services/nickname';
 import { getConfessionService } from '../services/confession';
 import { getPersonalityManager } from '../services/personalityManager';
+import { getConfessionBoothConversationService } from '../services/confessionBoothConversation';
 
 export function createDiscordClient(): Client {
   // Create client with intents required for message-based interaction
@@ -31,7 +31,17 @@ export function createDiscordClient(): Client {
       username: client.user?.tag,
       guilds: client.guilds.cache.size
     });
-    
+
+    // Set client in confession booth conversation service
+    try {
+      const boothConversationService = getConfessionBoothConversationService();
+      boothConversationService.setClient(client);
+    } catch (error) {
+      logger.warn('Failed to set client in confession booth conversation service', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
     // Set bot status to describe what it does
     if (client.user) {
       await client.user.setActivity('meow...', { type: ActivityType.Watching });
@@ -215,32 +225,6 @@ export function createDiscordClient(): Client {
 
     // Hardcoded welcome channel ID (stage floor)
     const WELCOME_CHANNEL_ID = '1526872609717747762';
-
-    // Assign nickname if member doesn't already have one and doesn't have owner role
-    try {
-      const nicknameService = getNicknameService();
-      
-      if (!nicknameService.hasNickname(member) && !nicknameService.hasOwnerRole(member)) {
-        logger.info('Assigning nickname to new member', {
-          userId: member.id,
-          username: member.user.tag
-        });
-        
-        await nicknameService.generateAndAssignNickname(member);
-      } else if (nicknameService.hasOwnerRole(member)) {
-        logger.info('Skipped nickname assignment for owner role member', {
-          userId: member.id,
-          username: member.user.tag
-        });
-      }
-    } catch (error) {
-      // Nickname assignment failure should not block the welcome message
-      logger.warn('Failed to assign nickname to new member', {
-        userId: member.id,
-        username: member.user.tag,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
 
     // Bocchi-style welcome messages pool (with USER_MENTION placeholder)
     const welcomeMessageTemplates = [

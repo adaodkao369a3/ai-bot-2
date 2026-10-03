@@ -23,6 +23,7 @@ import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
 import { initNicknameService, getNicknameService } from './nickname';
 import { initConfessionService, getConfessionService } from './confession';
+import { initConfessionBoothConversationService, getConfessionBoothConversationService } from './confessionBoothConversation';
 import { featureToggleService, Feature } from './featureToggle';
 import { GUIDE_CHANNEL_ID } from '../config';
 import { logger } from '../utils/logger';
@@ -30,6 +31,7 @@ import { env } from '../utils/env';
 
 export class MessageRouter {
   private aiService: AIService;
+  private bombiCooldowns: Map<string, number> = new Map(); // userId -> last used timestamp
 
   constructor() {
     this.aiService = createAIService(env.GROQ_API_KEY);
@@ -39,6 +41,8 @@ export class MessageRouter {
     initNicknameService();
     // Initialize confession service
     initConfessionService();
+    // Initialize confession booth conversation service
+    initConfessionBoothConversationService(this.aiService);
   }
 
   /**
@@ -81,6 +85,12 @@ export class MessageRouter {
       const channelId = message.channelId;
       const content = message.content.trim();
 
+      // Check for .bombi command (help for general users)
+      if (content === '.bombi') {
+        await this.handleBombiCommand(message);
+        return;
+      }
+
       // Check for commands first
       if (content.startsWith('~')) {
         await this.handleCommand(message, content);
@@ -115,15 +125,24 @@ export class MessageRouter {
         const normalizedContent = content.toLowerCase().trim();
         if (normalizedContent === 'bocchi end confession') {
           await this.endConfessionSession(message.guild, activeSession.id, activeSession.booth_channel_id, message.author.id);
-          
+
           if (message.channel.isSendable()) {
             await message.reply('yes my child. you may go now.');
           }
           return;
         }
-        
-        // Continue to normal AI pipeline for booth conversation
-        // Do NOT return here - let it process through the normal message flow
+
+        // Verify this is from the active participant
+        if (message.author.id === activeSession.user_id) {
+          // Route to confession booth conversation service
+          // This handles 3-second batching and priest personality
+          const boothConversationService = getConfessionBoothConversationService();
+          await boothConversationService.handleMessage(message);
+          return;
+        }
+
+        // Ignore messages from other users in the booth
+        return;
       }
 
       // Fetch the guild member before any gates so staff/admins can bypass
@@ -155,6 +174,16 @@ export class MessageRouter {
       // Step 3: Check if message is addressing Bocchi
       const isAddressing = await addressingService.isAddressingBot(message, botUserId, guildId);
       if (!isAddressing) {
+        return;
+      }
+
+      // Step 3.5: Check if user is addressing a different personality than current
+      const addressedCharacter = await addressingService.isAddressingDifferentPersonality(message, guildId);
+      if (addressedCharacter) {
+        await message.reply({
+          content: `${addressedCharacter.name} seems to be on break, but i am here...`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
         return;
       }
 
@@ -1701,11 +1730,33 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         });
       }
 
-      // Send booth response mentioning the user
-      const response = `<@${message.author.id}> alright... that's certainly a confession. what the hell`;
+      // Start booth conversation session with priest personality
+      const boothConversationService = getConfessionBoothConversationService();
+      const userName = message.author.globalName ?? message.author.displayName;
+      const sessionData = boothConversationService.startSession(
+        session.id,
+        guild.id,
+        message.author.id,
+        boothChannel.id,
+        confessionText,
+        userName
+      );
+
+      // Generate initial priest response that acknowledges the actual confession
+      const initialResponse = await boothConversationService.generateInitialResponse(sessionData);
+
       if (boothChannel.isSendable()) {
-        await boothChannel.send(response);
+        await boothChannel.send(initialResponse);
       }
+
+      // Add bot response to conversation context
+      conversationContextService.addMessage(
+        boothChannel.id,
+        boothChannel.client.user.id,
+        'Priest',
+        initialResponse,
+        true
+      );
 
       // Send persistent Leave button
       const leaveButton = new ButtonBuilder()
@@ -1870,10 +1921,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
   private async endConfessionSession(guild: Guild, sessionId: number, boothChannelId: string, userId: string): Promise<void> {
     try {
       const confessionService = getConfessionService();
-      
+
       // Get session data before ending
       const session = await confessionService.getActiveSession(guild.id);
       if (!session) return;
+
+      // End booth conversation session (cleans up debounce timer and context)
+      const boothConversationService = getConfessionBoothConversationService();
+      boothConversationService.endSession(sessionId);
 
       // Revoke access
       try {
@@ -1918,6 +1973,79 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         error: error instanceof Error ? error.message : String(error)
       });
       return 'User';
+    }
+  }
+
+  /**
+   * Handle .bombi command - shows help embed for general users
+   */
+  private async handleBombiCommand(message: Message): Promise<void> {
+    const userId = message.author.id;
+    const now = Date.now();
+    const cooldownMs = 5000; // 5 seconds
+
+    // Check cooldown
+    const lastUsed = this.bombiCooldowns.get(userId);
+    if (lastUsed && now - lastUsed < cooldownMs) {
+      const remaining = Math.ceil((cooldownMs - (now - lastUsed)) / 1000);
+      await message.reply({
+        content: `please wait ${remaining} more second(s) before using this command again...`,
+        allowedMentions: { parse: [], repliedUser: true, users: [userId] }
+      });
+      return;
+    }
+
+    // Update cooldown
+    this.bombiCooldowns.set(userId, now);
+
+    try {
+      const personalityManager = getPersonalityManager();
+      const activeCharacter = await personalityManager.getActiveCharacter(message.guild?.id || '');
+
+      // Get avatar path
+      const avatarPath = activeCharacter.avatarAssets.length > 0
+        ? `assets/avatars/${activeCharacter.avatarAssets[0]}`
+        : null;
+
+      const embed = new EmbedBuilder()
+        .setTitle('Bombi Bot Help')
+        .setDescription('Here is how you can interact with me:')
+        .addFields(
+          { name: '__**Talking to me**__', value: 'You can mention me, reply to my messages, or call me by name to start a conversation.' },
+          { name: '__**Confession Booth**__', value: 'Type "confession" to start a private confession session in a temporary channel.' },
+          { name: '__**Personality**__', value: 'I have different personalities. The current one might change based on server settings.' }
+        )
+        .setColor(0x5865F2);
+
+      // Add thumbnail if avatar exists
+      if (avatarPath) {
+        const fs = require('fs');
+        const path = require('path');
+        const fullPath = path.join(process.cwd(), avatarPath);
+        if (fs.existsSync(fullPath)) {
+          embed.setThumbnail(`attachment://${activeCharacter.avatarAssets[0]}`);
+          await message.reply({
+            embeds: [embed],
+            files: [{ attachment: fullPath, name: activeCharacter.avatarAssets[0] }],
+            allowedMentions: { parse: [], repliedUser: true, users: [userId] }
+          });
+          return;
+        }
+      }
+
+      // Send without thumbnail if no avatar
+      await message.reply({
+        embeds: [embed],
+        allowedMentions: { parse: [], repliedUser: true, users: [userId] }
+      });
+    } catch (error) {
+      logger.error('Failed to handle .bombi command', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply({
+        content: 'something went wrong... sorry...',
+        allowedMentions: { parse: [], repliedUser: true, users: [userId] }
+      });
     }
   }
 

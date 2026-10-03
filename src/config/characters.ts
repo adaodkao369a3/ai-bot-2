@@ -52,6 +52,8 @@ export interface Character {
   blacklistedMessages: string[];
   /** AI error messages */
   errorMessages: string[];
+  /** Character world context - relationships, environment, life details (optional) */
+  characterWorld?: string;
 }
 
 /**
