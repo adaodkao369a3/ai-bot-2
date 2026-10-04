@@ -25,6 +25,7 @@ import { initNicknameService, getNicknameService } from './nickname';
 import { initConfessionService, getConfessionService } from './confession';
 import { initConfessionBoothConversationService, getConfessionBoothConversationService } from './confessionBoothConversation';
 import { featureToggleService, Feature } from './featureToggle';
+import { channelRestrictionsService } from './channelRestrictions';
 import { GUIDE_CHANNEL_ID } from '../config';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
@@ -160,6 +161,13 @@ export class MessageRouter {
       const botEnabled = await botStateService.isEnabled(guildId);
       if (!botEnabled) {
         logger.debug(`Bot disabled for guild ${guildId}, ignoring message`);
+        return;
+      }
+
+      // Step 1.5: Check if channel is allowed (staff/admins bypass restrictions)
+      const channelAllowed = await channelRestrictionsService.isChannelAllowed(guildId, channelId);
+      if (!channelAllowed && !isStaff) {
+        logger.debug(`Channel ${channelId} not allowed for bot in guild ${guildId}`);
         return;
       }
 
@@ -849,6 +857,19 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         }
 
         await this.handlePersonalityCommand(message);
+        break;
+
+      case '~restrict':
+        // Only staff can use restrict command
+        if (!isStaff) {
+          await message.reply({
+            content: 'nice try bro, only admins can use that command',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+          return;
+        }
+
+        await this.handleRestrictCommand(message, parts.slice(1));
         break;
 
       default:
@@ -2047,6 +2068,284 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         allowedMentions: { parse: [], repliedUser: true, users: [userId] }
       });
     }
+  }
+
+  /**
+   * Handle ~restrict command
+   * Shows modern UI for managing channel restrictions
+   */
+  private async handleRestrictCommand(message: Message, args: string[]): Promise<void> {
+    if (!message.guild) return;
+
+    const guildId = message.guild.id;
+
+    try {
+      // Show main menu if no arguments
+      if (args.length === 0) {
+        await this.showRestrictMenu(message);
+        return;
+      }
+
+      const subcommand = args[0].toLowerCase();
+
+      switch (subcommand) {
+        case 'add':
+          await this.handleRestrictAdd(message);
+          break;
+        case 'remove':
+          await this.handleRestrictRemove(message);
+          break;
+        case 'clear':
+          await this.handleRestrictClear(message);
+          break;
+        case 'list':
+          await this.handleRestrictList(message);
+          break;
+        default:
+          await message.reply({
+            content: 'usage: ~restrict [add|remove|clear|list]',
+            allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+          });
+      }
+    } catch (error) {
+      logger.error('Failed to handle restrict command', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply({
+        content: 'something went wrong... try again later',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+    }
+  }
+
+  /**
+   * Show the main restrict menu with buttons
+   */
+  private async showRestrictMenu(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    const hasRestrictions = await channelRestrictionsService.hasRestrictions(message.guild.id);
+
+    const embed = new EmbedBuilder()
+      .setTitle('🔒 Channel Restrictions')
+      .setDescription(hasRestrictions
+        ? 'Bot is restricted to specific channels. Use the buttons below to manage restrictions.'
+        : 'Bot is allowed in all channels. Use the buttons below to add restrictions.')
+      .setColor(0x5865F2)
+      .addFields(
+        {
+          name: 'Current Status',
+          value: hasRestrictions ? '🔴 Restricted (specific channels only)' : '🟢 Unrestricted (all channels)',
+          inline: true
+        }
+      );
+
+    const addButton = new ButtonBuilder()
+      .setCustomId(`restrict_add_${message.author.id}`)
+      .setLabel('➕ Add Channel')
+      .setStyle(ButtonStyle.Success);
+
+    const removeButton = new ButtonBuilder()
+      .setCustomId(`restrict_remove_${message.author.id}`)
+      .setLabel('➖ Remove Channel')
+      .setStyle(ButtonStyle.Danger);
+
+    const listButton = new ButtonBuilder()
+      .setCustomId(`restrict_list_${message.author.id}`)
+      .setLabel('📋 List Channels')
+      .setStyle(ButtonStyle.Primary);
+
+    const clearButton = new ButtonBuilder()
+      .setCustomId(`restrict_clear_${message.author.id}`)
+      .setLabel('🗑️ Clear All')
+      .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      addButton,
+      removeButton,
+      listButton,
+      clearButton
+    );
+
+    await message.reply({
+      embeds: [embed],
+      components: [row],
+      allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+    });
+  }
+
+  /**
+   * Handle adding a channel to restrictions
+   */
+  async handleRestrictAdd(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    // Fetch all text channels in the guild
+    const channels = await message.guild.channels.fetch();
+    const textChannels = channels
+      .filter(c => c && c.isTextBased() && !c.isThread())
+      .map(c => c!);
+
+    if (textChannels.length === 0) {
+      await message.reply({
+        content: 'no text channels found in this server...',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+      return;
+    }
+
+    // Create select menu options (limit to 25)
+    const options = textChannels.slice(0, 25).map(channel => ({
+      label: channel.name.length > 100 ? channel.name.substring(0, 97) + '...' : channel.name,
+      description: channel.id,
+      value: channel.id
+    }));
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`restrict_select_add_${message.author.id}`)
+      .setPlaceholder('Select channels to allow bot in')
+      .setMinValues(1)
+      .setMaxValues(Math.min(options.length, 25))
+      .addOptions(options);
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    await message.reply({
+      content: 'select channels to allow the bot in:',
+      components: [row],
+      allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+    });
+  }
+
+  /**
+   * Handle removing a channel from restrictions
+   */
+  async handleRestrictRemove(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    const allowedChannels = await channelRestrictionsService.getAllowedChannels(message.guild.id);
+
+    if (allowedChannels.length === 0) {
+      await message.reply({
+        content: 'no channels are currently restricted... the bot is allowed in all channels',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+      return;
+    }
+
+    // Fetch channel details
+    const channelOptions = [];
+    for (const channelId of allowedChannels.slice(0, 25)) {
+      try {
+        const channel = await message.guild.channels.fetch(channelId);
+        if (channel && channel.isTextBased()) {
+          channelOptions.push({
+            label: channel.name.length > 100 ? channel.name.substring(0, 97) + '...' : channel.name,
+            description: channelId,
+            value: channelId
+          });
+        }
+      } catch (error) {
+        // Channel might not exist, skip it
+        logger.warn('Failed to fetch channel for restrict remove', { channelId });
+      }
+    }
+
+    if (channelOptions.length === 0) {
+      await message.reply({
+        content: 'no valid channels found in restrictions...',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`restrict_select_remove_${message.author.id}`)
+      .setPlaceholder('Select channels to remove from allowed list')
+      .setMinValues(1)
+      .setMaxValues(Math.min(channelOptions.length, 25))
+      .addOptions(channelOptions);
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    await message.reply({
+      content: 'select channels to remove from the allowed list:',
+      components: [row],
+      allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+    });
+  }
+
+  /**
+   * Handle clearing all restrictions
+   */
+  async handleRestrictClear(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    const hasRestrictions = await channelRestrictionsService.hasRestrictions(message.guild.id);
+
+    if (!hasRestrictions) {
+      await message.reply({
+        content: 'no restrictions to clear... bot is already allowed in all channels',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+      return;
+    }
+
+    // Show confirmation
+    const confirmButton = new ButtonBuilder()
+      .setCustomId(`restrict_clear_confirm_${message.author.id}`)
+      .setLabel('✅ Confirm Clear All')
+      .setStyle(ButtonStyle.Danger);
+
+    const cancelButton = new ButtonBuilder()
+      .setCustomId(`restrict_clear_cancel_${message.author.id}`)
+      .setLabel('❌ Cancel')
+      .setStyle(ButtonStyle.Secondary);
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confirmButton, cancelButton);
+
+    await message.reply({
+      content: 'are you sure you want to clear all channel restrictions? the bot will be allowed in all channels.',
+      components: [row],
+      allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+    });
+  }
+
+  /**
+   * Handle listing restricted channels
+   */
+  async handleRestrictList(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    const allowedChannels = await channelRestrictionsService.getAllowedChannels(message.guild.id);
+    const hasRestrictions = await channelRestrictionsService.hasRestrictions(message.guild.id);
+
+    const embed = new EmbedBuilder()
+      .setTitle('📋 Allowed Channels')
+      .setColor(0x5865F2);
+
+    if (!hasRestrictions || allowedChannels.length === 0) {
+      embed.setDescription('🟢 Bot is allowed in **all channels** (no restrictions set)');
+    } else {
+      const channelList = [];
+      for (const channelId of allowedChannels) {
+        try {
+          const channel = await message.guild.channels.fetch(channelId);
+          if (channel && channel.isTextBased()) {
+            channelList.push(`• <#${channelId}> (**${channel.name}**)`);
+          }
+        } catch (error) {
+          channelList.push(`• Unknown channel (${channelId})`);
+        }
+      }
+
+      embed.setDescription(`🔴 Bot is restricted to **${allowedChannels.length} channel(s):\n\n${channelList.join('\n')}`);
+    }
+
+    await message.reply({
+      embeds: [embed],
+      allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+    });
   }
 
 }

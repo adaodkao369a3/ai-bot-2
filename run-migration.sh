@@ -1,9 +1,12 @@
 #!/bin/bash
 
-# Run the feature toggles migration
-# This script applies the 003_feature_toggles.sql migration to the database
+# Run a specific migration
+# Usage: ./run-migration.sh <migration_file>
 
-echo "Running feature toggles migration..."
+# Get the migration file from argument or default to 003
+MIGRATION_FILE="${1:-migrations/003_feature_toggles.sql}"
+
+echo "Running migration: $MIGRATION_FILE"
 
 # Get the database URL from environment or use default
 DB_URL="${SUPABASE_DATABASE_URL}"
@@ -14,7 +17,7 @@ if [ -z "$DB_URL" ]; then
 fi
 
 # Run the migration
-psql "$DB_URL" -f migrations/003_feature_toggles.sql
+psql "$DB_URL" -f "$MIGRATION_FILE"
 
 if [ $? -eq 0 ]; then
   echo "Migration completed successfully"

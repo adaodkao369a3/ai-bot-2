@@ -16,6 +16,7 @@ import { rateLimitService } from './services/rateLimit';
 import { conversationContextService } from './services/conversationContext';
 import { memeService } from './services/meme';
 import { featureToggleService } from './services/featureToggle';
+import { channelRestrictionsService } from './services/channelRestrictions';
 import { initPersonalityManager } from './services/personalityManager';
 import { getConfessionService } from './services/confession';
 import { getConfessionBoothConversationService } from './services/confessionBoothConversation';
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
     await botStateService.initialize();
     await blacklistService.initialize();
     await featureToggleService.initialize();
+    await channelRestrictionsService.initialize();
     logger.info('Bocchi services initialized successfully');
 
     // Step 6: Initialize Discord connection

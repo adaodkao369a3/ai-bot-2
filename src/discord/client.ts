@@ -3,13 +3,14 @@
  * Creates Discord client with appropriate intents for planned functionality
  */
 
-import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuInteraction, StringSelectMenuBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, ActivityType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { Character, getAllCharacters } from '../config/characters';
 import { logger } from '../utils/logger';
 import { messageRouter } from '../services/messageRouter';
 import { getConfessionService } from '../services/confession';
 import { getPersonalityManager } from '../services/personalityManager';
 import { getConfessionBoothConversationService } from '../services/confessionBoothConversation';
+import { channelRestrictionsService } from '../services/channelRestrictions';
 
 export function createDiscordClient(): Client {
   // Create client with intents required for message-based interaction
@@ -58,7 +59,7 @@ export function createDiscordClient(): Client {
             if (boothChannel && boothChannel.type === 0) { // GuildText
               await confessionService.revokeBoothAccess(boothChannel, session.user_id);
             }
-            
+
             // Publish confession if there's content
             if (session.confession_text && session.confession_text.trim().length > 0) {
               const confessionNumber = await confessionService.getNextConfessionNumber(guildId);
@@ -87,29 +88,28 @@ export function createDiscordClient(): Client {
       logger.warn('Discord client user not available, skipping message');
       return;
     }
-    
+
     await messageRouter.handleMessage(message, client.user.id);
   });
 
-  // Handle button interactions
+  // Handle all interactions (buttons, modals, select menus)
   client.on('interactionCreate', async (interaction) => {
+    // Handle button interactions
     if (interaction.isButton()) {
       const customId = interaction.customId;
-      
+
+      // Confession booth buttons
       if (customId.startsWith('confession_modal_')) {
-        // Extract the user ID from the customId
         const expectedUserId = customId.replace('confession_modal_', '');
-        
-        // Only allow the user who triggered the button to click it
+
         if (interaction.user.id !== expectedUserId) {
-          await interaction.reply({ 
-            content: 'This confession booth button is not for you.', 
-            ephemeral: true 
+          await interaction.reply({
+            content: 'This confession booth button is not for you.',
+            ephemeral: true
           });
           return;
         }
-        
-        // Show confession modal
+
         const modal = new ModalBuilder()
           .setCustomId(`confession_submit_${interaction.user.id}`)
           .setTitle('Confession Booth');
@@ -122,7 +122,6 @@ export function createDiscordClient(): Client {
           .setMaxLength(1000);
 
         const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(confessionInput);
-
         modal.addComponents(firstActionRow);
 
         await interaction.showModal(modal);
@@ -138,10 +137,163 @@ export function createDiscordClient(): Client {
             await interaction.editReply(content);
           }
         } as any;
-        
+
         await messageRouter.handleConfessionLeave(mockMessage);
+        return;
       }
-    } else if (interaction.isModalSubmit()) {
+
+      // Restrict menu buttons
+      if (customId.startsWith('restrict_add_')) {
+        const expectedUserId = customId.replace('restrict_add_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this button is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        const mockMessage = {
+          guild: interaction.guild,
+          author: interaction.user,
+          channel: interaction.channel,
+          channelId: interaction.channelId,
+          reply: async (content: any) => {
+            await interaction.editReply(content);
+          }
+        } as any;
+
+        await messageRouter['handleRestrictAdd'](mockMessage);
+        return;
+      } else if (customId.startsWith('restrict_remove_')) {
+        const expectedUserId = customId.replace('restrict_remove_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this button is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        const mockMessage = {
+          guild: interaction.guild,
+          author: interaction.user,
+          channel: interaction.channel,
+          channelId: interaction.channelId,
+          reply: async (content: any) => {
+            await interaction.editReply(content);
+          }
+        } as any;
+
+        await messageRouter['handleRestrictRemove'](mockMessage);
+        return;
+      } else if (customId.startsWith('restrict_list_')) {
+        const expectedUserId = customId.replace('restrict_list_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this button is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        const mockMessage = {
+          guild: interaction.guild,
+          author: interaction.user,
+          channel: interaction.channel,
+          channelId: interaction.channelId,
+          reply: async (content: any) => {
+            await interaction.editReply(content);
+          }
+        } as any;
+
+        await messageRouter['handleRestrictList'](mockMessage);
+        return;
+      } else if (customId.startsWith('restrict_clear_')) {
+        const expectedUserId = customId.replace('restrict_clear_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this button is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        const mockMessage = {
+          guild: interaction.guild,
+          author: interaction.user,
+          channel: interaction.channel,
+          channelId: interaction.channelId,
+          reply: async (content: any) => {
+            await interaction.editReply(content);
+          }
+        } as any;
+
+        await messageRouter['handleRestrictClear'](mockMessage);
+        return;
+      } else if (customId.startsWith('restrict_clear_confirm_')) {
+        const expectedUserId = customId.replace('restrict_clear_confirm_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this button is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        try {
+          await channelRestrictionsService.clearRestrictions(interaction.guildId!);
+          await interaction.editReply({
+            content: 'cleared all channel restrictions... bot is now allowed in all channels',
+            components: []
+          });
+        } catch (error) {
+          logger.error('Failed to clear channel restrictions', {
+            guildId: interaction.guildId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+          await interaction.editReply({
+            content: 'failed to clear restrictions... try again later',
+            components: []
+          });
+        }
+        return;
+      } else if (customId.startsWith('restrict_clear_cancel_')) {
+        const expectedUserId = customId.replace('restrict_clear_cancel_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this button is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.update({
+          content: 'cancelled...',
+          components: []
+        });
+        return;
+      }
+    }
+
+    // Handle modal submissions
+    if (interaction.isModalSubmit()) {
       const customId = interaction.customId;
 
       if (customId.startsWith('confession_submit_')) {
@@ -160,14 +312,18 @@ export function createDiscordClient(): Client {
         } as any;
 
         await messageRouter.handleConfessionSubmit(mockMessage, confessionText);
+        return;
       }
-    } else if (interaction.isStringSelectMenu()) {
+    }
+
+    // Handle select menu interactions
+    if (interaction.isStringSelectMenu()) {
       const customId = interaction.customId;
 
+      // Personality selection
       if (customId.startsWith('personality_select_')) {
         const expectedUserId = customId.replace('personality_select_', '');
 
-        // Only allow the user who triggered the command to select
         if (interaction.user.id !== expectedUserId) {
           await interaction.reply({
             content: 'this dropdown is not for you...',
@@ -189,7 +345,6 @@ export function createDiscordClient(): Client {
           return;
         }
 
-        // Set the personality
         const manager = getPersonalityManager();
         const result = await manager.setPersonality(
           interaction.guildId!,
@@ -209,6 +364,76 @@ export function createDiscordClient(): Client {
             components: []
           });
         }
+        return;
+      }
+
+      // Restrict channel selection
+      if (customId.startsWith('restrict_select_add_')) {
+        const expectedUserId = customId.replace('restrict_select_add_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this dropdown is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        const channelIds = interaction.values;
+        let addedCount = 0;
+
+        for (const channelId of channelIds) {
+          try {
+            await channelRestrictionsService.addChannel(interaction.guildId!, channelId);
+            addedCount++;
+          } catch (error) {
+            logger.error('Failed to add channel restriction', {
+              channelId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+
+        await interaction.editReply({
+          content: `added ${addedCount} channel(s) to the allowed list...`,
+          components: []
+        });
+        return;
+      } else if (customId.startsWith('restrict_select_remove_')) {
+        const expectedUserId = customId.replace('restrict_select_remove_', '');
+
+        if (interaction.user.id !== expectedUserId) {
+          await interaction.reply({
+            content: 'this dropdown is not for you...',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+
+        const channelIds = interaction.values;
+        let removedCount = 0;
+
+        for (const channelId of channelIds) {
+          try {
+            await channelRestrictionsService.removeChannel(interaction.guildId!, channelId);
+            removedCount++;
+          } catch (error) {
+            logger.error('Failed to remove channel restriction', {
+              channelId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+
+        await interaction.editReply({
+          content: `removed ${removedCount} channel(s) from the allowed list...`,
+          components: []
+        });
+        return;
       }
     }
   });
@@ -253,7 +478,7 @@ export function createDiscordClient(): Client {
     try {
       // Get the welcome channel
       const welcomeChannel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
-      
+
       if (!welcomeChannel) {
         logger.warn('Welcome channel not found', { channelId: WELCOME_CHANNEL_ID });
         return;
@@ -270,7 +495,7 @@ export function createDiscordClient(): Client {
       do {
         messageIndex = Math.floor(Math.random() * welcomeMessageTemplates.length);
       } while (messageIndex === lastWelcomeMessageIndex && welcomeMessageTemplates.length > 1);
-      
+
       lastWelcomeMessageIndex = messageIndex;
       const selectedTemplate = welcomeMessageTemplates[messageIndex];
 
@@ -285,9 +510,9 @@ export function createDiscordClient(): Client {
           repliedUser: false
         }
       });
-      
-      logger.info('Welcome message sent', { 
-        userId: member.id, 
+
+      logger.info('Welcome message sent', {
+        userId: member.id,
         username: member.user.tag,
         channelId: WELCOME_CHANNEL_ID,
         messageIndex
@@ -313,8 +538,8 @@ export async function connectDiscord(client: Client, token: string): Promise<voi
     await client.login(token);
     logger.info('Discord connection established');
   } catch (error) {
-    logger.error('Failed to connect to Discord', { 
-      error: error instanceof Error ? error.message : String(error) 
+    logger.error('Failed to connect to Discord', {
+      error: error instanceof Error ? error.message : String(error)
     });
     throw error;
   }
@@ -326,8 +551,8 @@ export async function disconnectDiscord(client: Client): Promise<void> {
     client.destroy();
     logger.info('Discord connection closed');
   } catch (error) {
-    logger.error('Error during Discord disconnect', { 
-      error: error instanceof Error ? error.message : String(error) 
+    logger.error('Error during Discord disconnect', {
+      error: error instanceof Error ? error.message : String(error)
     });
     throw error;
   }
