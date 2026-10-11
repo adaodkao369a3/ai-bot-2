@@ -2039,9 +2039,6 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       const success = await confessionService.publishSimpleConfession(message.guild, confessionText);
 
       if (success) {
-        if (message.channel.isSendable()) {
-          await message.reply('confession published... it\'s out there now.');
-        }
         logger.info('Simple confession published', {
           userId: message.author.id,
           guildId: message.guild.id
