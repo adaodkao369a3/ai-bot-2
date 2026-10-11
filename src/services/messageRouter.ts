@@ -35,6 +35,7 @@ export class MessageRouter {
   private bombiCooldowns: Map<string, number> = new Map(); // userId -> last used timestamp
   private nicknameUsageCounts: Map<string, { count: number; resetTime: number }> = new Map(); // userId -> {count, resetTime}
   private channelMessageCounts: Map<string, number> = new Map(); // channelId -> message count for probability
+  private usedGifUrls: Map<string, Set<string>> = new Map(); // guildId -> set of used GIF URLs
 
   constructor() {
     this.aiService = createAIService(env.GROQ_API_KEY);
@@ -478,13 +479,40 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
             // Search for GIF based on personality
             const gifQuery = activeCharacter?.name || 'anime';
-            const gifResult = await mediaService.searchGif(gifQuery);
+            const usedGifs = this.usedGifUrls.get(guildId) || new Set();
 
-            if (gifResult) {
+            // Try to get a GIF that hasn't been used yet
+            let gifResult = await mediaService.searchGif(gifQuery);
+            let attempts = 0;
+            const maxAttempts = 5;
+
+            while (gifResult && usedGifs.has(gifResult.url) && attempts < maxAttempts) {
+              // Try searching with variations of the query
+              const variations = ['anime', 'funny', 'reaction', 'meme', 'gif'];
+              const variation = variations[attempts % variations.length];
+              gifResult = await mediaService.searchGif(variation);
+              attempts++;
+            }
+
+            if (gifResult && !usedGifs.has(gifResult.url)) {
               mediaAttachment = { gif: gifResult.url };
+              // Track this GIF as used
+              if (!this.usedGifUrls.has(guildId)) {
+                this.usedGifUrls.set(guildId, new Set());
+              }
+              this.usedGifUrls.get(guildId)!.add(gifResult.url);
+
+              // Limit the set size to prevent memory issues (keep last 100)
+              const guildGifSet = this.usedGifUrls.get(guildId)!;
+              if (guildGifSet.size > 100) {
+                const firstItem = guildGifSet.values().next().value;
+                guildGifSet.delete(firstItem);
+              }
+
               logger.info('Attached GIF to response', {
                 channelId,
-                query: gifQuery
+                query: gifQuery,
+                totalUsed: guildGifSet.size
               });
             }
           } else {

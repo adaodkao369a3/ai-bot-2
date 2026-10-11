@@ -56,7 +56,7 @@ export class MediaService {
       q: query,
       key,
       client_key: 'bot-kun',
-      limit: '10',
+      limit: '20',
       media_filter: 'gif'
     });
 
@@ -73,11 +73,15 @@ export class MediaService {
       }
 
       const data = (await response.json()) as KlipyResponse;
-      const result = data.results?.find(item => this.extractGifUrl(item));
+      const results = data.results?.filter(item => this.extractGifUrl(item));
 
-      if (!result) {
+      if (!results || results.length === 0) {
         return null;
       }
+
+      // Pick a random result from the available options
+      const randomIndex = Math.floor(Math.random() * results.length);
+      const result = results[randomIndex];
 
       const url = this.extractGifUrl(result);
       if (!url) {
