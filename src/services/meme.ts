@@ -128,7 +128,7 @@ export class MemeService {
    * Also ensures the meme hasn't been used recently in this channel
    */
   async fetchMeme(conversationText = '', requestedCategory?: string, channelId?: string): Promise<Meme | null> {
-    const usedMemes = channelId ? (this.usedMemeUrls.get(channelId) || new Set()) : new Set();
+    const usedMemes: Set<string> = channelId ? (this.usedMemeUrls.get(channelId) || new Set<string>()) : new Set<string>();
 
     // If specific category requested, try that first with more attempts
     if (requestedCategory) {
@@ -186,7 +186,7 @@ export class MemeService {
     if (!channelId) return;
 
     if (!this.usedMemeUrls.has(channelId)) {
-      this.usedMemeUrls.set(channelId, new Set());
+      this.usedMemeUrls.set(channelId, new Set<string>());
     }
 
     const channelMemes = this.usedMemeUrls.get(channelId)!;
@@ -194,7 +194,7 @@ export class MemeService {
 
     // Limit the set size to prevent memory issues (keep last 100)
     if (channelMemes.size > 100) {
-      const firstItem = channelMemes.values().next().value;
+      const firstItem = channelMemes.values().next().value as string;
       channelMemes.delete(firstItem);
     }
   }

@@ -22,8 +22,8 @@ import { mediaService } from './media';
 import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
 import { initNicknameService, getNicknameService } from './nickname';
-import { initConfessionService, getConfessionService } from './services/confession';
-import { initConfessionBoothConversationService, getConfessionBoothConversationService } from './services/confessionBoothConversation';
+import { initConfessionService, getConfessionService } from './confession';
+import { initConfessionBoothConversationService, getConfessionBoothConversationService } from './confessionBoothConversation';
 import { featureToggleService, Feature } from './featureToggle';
 import { channelRestrictionsService } from './channelRestrictions';
 import { GUIDE_CHANNEL_ID } from '../config';
@@ -503,7 +503,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
           // Search for GIF based on personality emotion (not just name)
           const emotionQueries = this.getPersonalityEmotionQueries(activeCharacter?.name);
-          const usedGifs = this.usedGifUrls.get(guildId) || new Set();
+          const usedGifs = this.usedGifUrls.get(guildId) || new Set<string>();
 
           // Try each emotion query until we find an unused GIF
           for (const query of emotionQueries) {
@@ -513,14 +513,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
               gifAttachment = gifResult.url;
               // Track this GIF as used
               if (!this.usedGifUrls.has(guildId)) {
-                this.usedGifUrls.set(guildId, new Set());
+                this.usedGifUrls.set(guildId, new Set<string>());
               }
               this.usedGifUrls.get(guildId)!.add(gifResult.url);
 
               // Limit the set size to prevent memory issues (keep last 100)
               const guildGifSet = this.usedGifUrls.get(guildId)!;
               if (guildGifSet.size > 100) {
-                const firstItem = guildGifSet.values().next().value;
+                const firstItem = guildGifSet.values().next().value as string;
                 guildGifSet.delete(firstItem);
               }
 
@@ -617,6 +617,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
   ): Promise<boolean> {
     const content = cleanContent.toLowerCase();
     const guildId = message.guild?.id;
+    const channelId = message.channelId;
 
     if (!guildId) {
       return false;
