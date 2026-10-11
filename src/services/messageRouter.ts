@@ -1,5 +1,5 @@
 /**
- * Message routing pipeline for Bocchi
+ * Message routing pipeline for bot
  * Central message handling pipeline that coordinates all services
  */
 
@@ -22,8 +22,8 @@ import { mediaService } from './media';
 import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
 import { initNicknameService, getNicknameService } from './nickname';
-import { initConfessionService, getConfessionService } from './confession';
-import { initConfessionBoothConversationService, getConfessionBoothConversationService } from './confessionBoothConversation';
+import { initConfessionService, getConfessionService } from './services/confession';
+import { initConfessionBoothConversationService, getConfessionBoothConversationService } from './services/confessionBoothConversation';
 import { featureToggleService, Feature } from './featureToggle';
 import { channelRestrictionsService } from './channelRestrictions';
 import { GUIDE_CHANNEL_ID } from '../config';
@@ -128,6 +128,31 @@ export class MessageRouter {
   }
 
   /**
+   * Get emotion-related GIF queries based on personality
+   */
+  private getPersonalityEmotionQueries(personalityName?: string): string[] {
+    const name = personalityName?.toLowerCase() || '';
+
+    // Personality-specific emotion queries
+    if (name.includes('bocchi')) {
+      // Shy/anxious personality emotions
+      return ['shy anime', 'anxious anime', 'nervous anime', 'embarrassed anime', 'anime blush'];
+    } else if (name.includes('nocchi')) {
+      // Gangster/thug personality emotions
+      return ['cool anime', 'smug anime', 'confident anime', 'tough anime', 'anime cool'];
+    } else if (name.includes('bot kun')) {
+      // Sarcasm/wit personality emotions
+      return ['deadpan anime', 'sarcastic anime', 'anime facepalm', 'unimpressed anime', 'dry humor anime'];
+    } else if (name.includes('heisenberg')) {
+      // Intimidating/calculating personality emotions
+      return ['intense anime', 'calculating anime', 'menacing anime', 'serious anime', 'cold stare anime'];
+    }
+
+    // Generic emotion queries as fallback
+    return ['anime reaction', 'anime emotion', 'anime face', 'anime expression', 'anime mood'];
+  }
+
+  /**
    * Main message routing pipeline
    */
   async handleMessage(message: Message, botUserId: string): Promise<void> {
@@ -146,6 +171,9 @@ export class MessageRouter {
       const userId = message.author.id;
       const channelId = message.channelId;
       const content = message.content.trim();
+
+      // Update channel activity for idle meme tracking
+      memeService.updateChannelActivity(channelId);
 
       // Check for .bombi command (help for general users)
       if (content === '.bombi') {
@@ -464,38 +492,25 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           true
         );
 
-        // Check if we should attach media (GIF or meme) - 2/5 probability
-        const shouldAttach = this.shouldAttachMedia(channelId);
-        let mediaAttachment: { gif?: string; meme?: any } | null = null;
+        // Check if we should attach a GIF - 2/5 probability (personality/emotion related)
+        const shouldAttachGif = this.shouldAttachMedia(channelId);
+        let gifAttachment: string | null = null;
 
-        if (shouldAttach) {
-          // 50/50 chance between GIF and meme
-          const useGif = Math.random() < 0.5;
+        if (shouldAttachGif) {
+          // Get current personality for GIF search
+          const personalityManager = getPersonalityManager();
+          const activeCharacter = await personalityManager.getActiveCharacter(guildId);
 
-          if (useGif) {
-            // Get current personality for GIF search
-            const personalityManager = getPersonalityManager();
-            const activeCharacter = await personalityManager.getActiveCharacter(guildId);
+          // Search for GIF based on personality emotion (not just name)
+          const emotionQueries = this.getPersonalityEmotionQueries(activeCharacter?.name);
+          const usedGifs = this.usedGifUrls.get(guildId) || new Set();
 
-            // Search for GIF based on personality
-            const gifQuery = activeCharacter?.name || 'anime';
-            const usedGifs = this.usedGifUrls.get(guildId) || new Set();
-
-            // Try to get a GIF that hasn't been used yet
-            let gifResult = await mediaService.searchGif(gifQuery);
-            let attempts = 0;
-            const maxAttempts = 5;
-
-            while (gifResult && usedGifs.has(gifResult.url) && attempts < maxAttempts) {
-              // Try searching with variations of the query
-              const variations = ['anime', 'funny', 'reaction', 'meme', 'gif'];
-              const variation = variations[attempts % variations.length];
-              gifResult = await mediaService.searchGif(variation);
-              attempts++;
-            }
+          // Try each emotion query until we find an unused GIF
+          for (const query of emotionQueries) {
+            let gifResult = await mediaService.searchGif(query);
 
             if (gifResult && !usedGifs.has(gifResult.url)) {
-              mediaAttachment = { gif: gifResult.url };
+              gifAttachment = gifResult.url;
               // Track this GIF as used
               if (!this.usedGifUrls.has(guildId)) {
                 this.usedGifUrls.set(guildId, new Set());
@@ -511,25 +526,15 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
               logger.info('Attached GIF to response', {
                 channelId,
-                query: gifQuery,
+                query,
                 totalUsed: guildGifSet.size
               });
-            }
-          } else {
-            // Search for meme based on conversation
-            const meme = await memeService.fetchMeme(conversationContext);
-
-            if (meme) {
-              mediaAttachment = { meme };
-              logger.info('Attached meme to response', {
-                channelId,
-                subreddit: meme.subreddit
-              });
+              break;
             }
           }
         }
 
-        // Send response with optional media attachment
+        // Send response with optional GIF attachment
         const replyData: any = {
           content: sanitizedContent,
           allowedMentions: {
@@ -539,18 +544,12 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           }
         };
 
-        if (mediaAttachment?.gif) {
-          replyData.files = [{ attachment: mediaAttachment.gif, name: 'reaction.gif' }];
-        } else if (mediaAttachment?.meme) {
-          replyData.embeds = [
-            new EmbedBuilder()
-              .setImage(mediaAttachment.meme.imageUrl)
-              .setColor(0xFFA500)
-          ];
+        if (gifAttachment) {
+          replyData.files = [{ attachment: gifAttachment, name: 'reaction.gif' }];
         }
 
         await message.reply(replyData);
-        logger.info(`Bocchi responded to user ${userId} in guild ${guildId}`);
+        logger.info(`Bot responded to user ${userId} in guild ${guildId}`);
       } else {
         // AI failed, send error message
         const errorMessage = await personalityService.getErrorMessage(guildId);
@@ -639,7 +638,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       }
 
       const category = this.extractMemeCategory(content);
-      const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`, category);
+      const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`, category, channelId);
       if (!meme) {
         const messages = [
           'nahhh couldn\'t find one',

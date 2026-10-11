@@ -37,17 +37,18 @@ interface ChannelIdleState {
   lastMemeReplyTime: number;
   conversationStartTime: number;
   awaitingReply: boolean;
+  lastConversationTime: number;
 }
 
 export class MemeService {
   private channelStates: Map<string, ChannelIdleState> = new Map();
+  private usedMemeUrls: Map<string, Set<string>> = new Map(); // channelId -> set of used meme URLs
 
   /**
-   * Check if a meme should be dropped based on the new scheduling system
-   * - Drop a meme every 7 minutes if the channel is active
+   * Check if a meme should be dropped based on inactivity
+   * - Only drop memes when the channel is dead (inactive for at least 15 minutes)
    * - If no reply to the last meme, stop dropping until someone talks again
-   * - Only works for channels that have recent activity
-   * - Only drop memes after 7 minutes of conversation has passed
+   * - Only drop memes after 15 minutes of inactivity
    */
   shouldDropIdleMeme(channelId: string): boolean {
     if (!MEME_IDLE_ENABLED) {
@@ -62,26 +63,14 @@ export class MemeService {
       return false;
     }
 
-    const sevenMinutes = 7 * 60 * 1000;
+    const fifteenMinutes = 15 * 60 * 1000;
     const thirtyMinutes = 30 * 60 * 1000;
     const timeSinceLastMeme = now - state.lastMemeDropTime;
     const timeSinceLastMessage = now - state.lastMessageTime;
-    const timeSinceConversationStart = now - state.conversationStartTime;
-
-    // If no messages in the last hour, don't drop memes (channel is inactive)
-    if (timeSinceLastMessage > 60 * 60 * 1000) {
-      return false;
-    }
-
-    // Don't drop memes in the first 7 minutes of conversation
-    if (timeSinceConversationStart < sevenMinutes) {
-      return false;
-    }
 
     // If we're waiting for a reply, don't drop more memes
     if (state.awaitingReply) {
       // If it's been more than 30 minutes with no reply, reset the state
-      // This handles the case where a channel becomes completely inactive
       if (timeSinceLastMeme > thirtyMinutes) {
         state.awaitingReply = false;
         this.channelStates.set(channelId, state);
@@ -90,9 +79,12 @@ export class MemeService {
       return false;
     }
 
-    // If we're not waiting for a reply and 7 minutes have passed, drop another one
-    if (timeSinceLastMeme >= sevenMinutes) {
-      return true;
+    // Only drop memes if the channel has been inactive for at least 15 minutes
+    if (timeSinceLastMessage >= fifteenMinutes) {
+      // Also ensure at least 15 minutes since last meme drop
+      if (timeSinceLastMeme >= fifteenMinutes) {
+        return true;
+      }
     }
 
     return false;
@@ -107,9 +99,11 @@ export class MemeService {
       lastMemeDropTime: 0,
       lastMemeReplyTime: 0,
       conversationStartTime: Date.now(),
-      awaitingReply: false
+      awaitingReply: false,
+      lastConversationTime: Date.now()
     };
     state.lastMessageTime = Date.now();
+    state.lastConversationTime = Date.now();
     state.awaitingReply = false; // We got a reply, so we can drop memes again
     this.channelStates.set(channelId, state);
   }
@@ -131,20 +125,25 @@ export class MemeService {
   /**
    * Fetch a meme that roughly matches the supplied conversation.
    * Implements fallback strategy: specific category -> broader search -> generic meme
+   * Also ensures the meme hasn't been used recently in this channel
    */
-  async fetchMeme(conversationText = '', requestedCategory?: string): Promise<Meme | null> {
+  async fetchMeme(conversationText = '', requestedCategory?: string, channelId?: string): Promise<Meme | null> {
+    const usedMemes = channelId ? (this.usedMemeUrls.get(channelId) || new Set()) : new Set();
+
     // If specific category requested, try that first with more attempts
     if (requestedCategory) {
-      const categoryMeme = await this.fetchFromCategory(requestedCategory);
+      const categoryMeme = await this.fetchFromCategory(requestedCategory, usedMemes);
       if (categoryMeme) {
+        this.trackUsedMeme(channelId, categoryMeme.imageUrl);
         return categoryMeme;
       }
-      
+
       // Try related subreddits if the specific category fails
       const relatedSubreddits = this.getRelatedSubreddits(requestedCategory);
       for (const subreddit of relatedSubreddits) {
-        const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`);
+        const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`, usedMemes);
         if (meme) {
+          this.trackUsedMeme(channelId, meme.imageUrl);
           return meme;
         }
       }
@@ -157,10 +156,12 @@ export class MemeService {
     for (const subreddit of subreddits) {
       for (let attempt = 0; attempt < maxAttemptsPerSubreddit; attempt++) {
         const meme = await this.fetchFromEndpoint(
-          subreddit === 'memes' ? MEME_API_URL : `${MEME_API_URL}/${subreddit}`
+          subreddit === 'memes' ? MEME_API_URL : `${MEME_API_URL}/${subreddit}`,
+          usedMemes
         );
 
         if (meme) {
+          this.trackUsedMeme(channelId, meme.imageUrl);
           return meme;
         }
       }
@@ -168,13 +169,34 @@ export class MemeService {
 
     // Fallback to generic memes only if all else fails
     for (let attempt = 0; attempt < 2; attempt++) {
-      const meme = await this.fetchFromEndpoint(MEME_API_URL);
+      const meme = await this.fetchFromEndpoint(MEME_API_URL, usedMemes);
       if (meme) {
+        this.trackUsedMeme(channelId, meme.imageUrl);
         return meme;
       }
     }
 
     return null;
+  }
+
+  /**
+   * Track a meme as used in a channel
+   */
+  private trackUsedMeme(channelId: string | undefined, memeUrl: string): void {
+    if (!channelId) return;
+
+    if (!this.usedMemeUrls.has(channelId)) {
+      this.usedMemeUrls.set(channelId, new Set());
+    }
+
+    const channelMemes = this.usedMemeUrls.get(channelId)!;
+    channelMemes.add(memeUrl);
+
+    // Limit the set size to prevent memory issues (keep last 100)
+    if (channelMemes.size > 100) {
+      const firstItem = channelMemes.values().next().value;
+      channelMemes.delete(firstItem);
+    }
   }
 
   /**
@@ -202,14 +224,14 @@ export class MemeService {
   /**
    * Fetch from a specific category/subreddit
    */
-  private async fetchFromCategory(category: string): Promise<Meme | null> {
+  private async fetchFromCategory(category: string, usedMemes: Set<string>): Promise<Meme | null> {
     const subreddit = this.mapCategoryToSubreddit(category);
     if (!subreddit) {
       return null;
     }
 
     for (let attempt = 0; attempt < 3; attempt++) {
-      const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`);
+      const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`, usedMemes);
       if (meme) {
         return meme;
       }
@@ -283,7 +305,7 @@ export class MemeService {
     return categoryMap[normalized] || null;
   }
 
-  private async fetchFromEndpoint(endpoint: string): Promise<Meme | null> {
+  private async fetchFromEndpoint(endpoint: string, usedMemes: Set<string> = new Set()): Promise<Meme | null> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), MEME_FETCH_TIMEOUT_MS);
 
@@ -295,6 +317,11 @@ export class MemeService {
 
       const data = (await response.json()) as MemeApiResponse;
       if (!data.url || !data.title || data.nsfw || data.spoiler) {
+        return null;
+      }
+
+      // Check if this meme has already been used
+      if (usedMemes.has(data.url)) {
         return null;
       }
 
