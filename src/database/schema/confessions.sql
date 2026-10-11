@@ -1,4 +1,4 @@
--- Confession booth database schema for Bocchi
+-- Confession booth database schema for bot
 
 -- Active confession session table
 CREATE TABLE IF NOT EXISTS confession_sessions (

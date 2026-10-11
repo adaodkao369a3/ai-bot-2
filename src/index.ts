@@ -1,5 +1,5 @@
 /**
- * Main entry point for Bocchi
+ * Main entry point for bot
  * Phase 2: Core brain and persistence implementation
  */
 
@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   let discordClient: ReturnType<typeof createDiscordClient> | null = null;
 
   try {
-    // Step 1: Bocchi is starting
+    // Step 1: Bot is starting
     logger.info(`${BOT_NAME} Phase 2 starting...`);
 
     // Step 2: Configuration loaded (validated by env.ts)

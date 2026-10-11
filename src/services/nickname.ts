@@ -1,5 +1,5 @@
 /**
- * Nickname service for Bocchi
+ * Nickname service for bot
  * Handles random nickname generation with uniqueness checking
  */
 

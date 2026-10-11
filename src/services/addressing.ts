@@ -1,6 +1,6 @@
 /**
- * Addressing detection service for Bocchi
- * Detects when messages are directed at Bocchi via mentions, name, or replies
+ * Addressing detection service for bot personalities
+ * Detects when messages are directed at the bot via mentions, name, or replies
  */
 
 import { Message } from 'discord.js';
@@ -73,7 +73,15 @@ export class AddressingService {
           return regex.test(content);
         });
 
-        if (startsWithName || greetingThenName || containsNameEarly) {
+        // Check if message contains invocation name anywhere in the sentence
+        const containsNameAnywhere = invocationNames.some(name => {
+          const lowerName = name.toLowerCase();
+          // Match name anywhere with word boundaries (not just at start)
+          const regex = new RegExp(`\\b${lowerName}\\b`, 'i');
+          return regex.test(content);
+        });
+
+        if (startsWithName || greetingThenName || containsNameEarly || containsNameAnywhere) {
           // If this is not the active character, return it
           if (character.id !== activeCharacter.id) {
             return character;
@@ -140,7 +148,15 @@ export class AddressingService {
         return regex.test(content);
       });
 
-      return startsWithName || greetingThenName || containsNameEarly;
+      // Check if message contains invocation name anywhere in the sentence
+      const containsNameAnywhere = invocationNames.some(name => {
+        const lowerName = name.toLowerCase();
+        // Match name anywhere with word boundaries (not just at start)
+        const regex = new RegExp(`\\b${lowerName}\\b`, 'i');
+        return regex.test(content);
+      });
+
+      return startsWithName || greetingThenName || containsNameEarly || containsNameAnywhere;
     } catch (error) {
       logger.error('Failed to get active character for name address check', {
         guildId,
@@ -165,11 +181,11 @@ export class AddressingService {
     ];
 
     // Check if message starts with bot name variations (with space or punctuation)
-    const startsWithName = botNameVariations.some(name => 
+    const startsWithName = botNameVariations.some(name =>
       content.startsWith(name + ' ') || content.startsWith(name + ',') || content.startsWith(name + '!') || content.startsWith(name + '?')
     );
 
-    // Check if message contains bot name with word boundaries
+    // Check if message contains bot name with word boundaries anywhere in the sentence
     // Sort by length (longest first) to handle compound names properly
     const sortedVariations = [...botNameVariations].sort((a, b) => b.length - a.length);
     const containsName = sortedVariations.some(name => {
@@ -220,22 +236,27 @@ export class AddressingService {
 
       if (invocationNames.length > 0) {
         const greetings = ['hi', 'hey', 'hello', 'yo', 'sup', 'ay', 'ayy', 'oi'];
-        
+
         // Sort by length (longest first) to handle compound names properly
         const sortedNames = [...invocationNames].sort((a, b) => b.length - a.length);
-        
+
         for (const name of sortedNames) {
           const lowerName = name.toLowerCase();
-          
+
           // Remove name at start with punctuation
           let regex = new RegExp(`^${lowerName}[\\s,!?]*`, 'i');
           content = content.replace(regex, '').trim();
-          
+
           // Remove greeting + name pattern
           for (const greeting of greetings) {
             regex = new RegExp(`^${greeting}\\s*${lowerName}[\\s,!?]*`, 'i');
             content = content.replace(regex, '').trim();
           }
+
+          // Remove name anywhere in the sentence (with word boundaries)
+          // Only remove if it's not part of a larger word
+          regex = new RegExp(`\\b${lowerName}\\b`, 'gi');
+          content = content.replace(regex, '').trim();
         }
       } else {
         // Fallback to legacy name removal
@@ -270,7 +291,12 @@ export class AddressingService {
     botNameVariations.sort((a, b) => b.length - a.length);
 
     for (const name of botNameVariations) {
-      const regex = new RegExp(`^${name}[\\s,!?]*`, 'i');
+      // Remove name at start with punctuation
+      let regex = new RegExp(`^${name}[\\s,!?]*`, 'i');
+      content = content.replace(regex, '').trim();
+
+      // Remove name anywhere in the sentence (with word boundaries)
+      regex = new RegExp(`\\b${name}\\b`, 'gi');
       content = content.replace(regex, '').trim();
     }
 

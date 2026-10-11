@@ -1,7 +1,7 @@
 {
-  "name": "bocchi",
+  "name": "discord-bot",
   "version": "1.0.0",
-  "description": "Bocchi - TypeScript Discord bot with Supabase integration",
+  "description": "TypeScript Discord bot with personality system and Supabase integration",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

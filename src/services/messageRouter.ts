@@ -33,6 +33,8 @@ import { env } from '../utils/env';
 export class MessageRouter {
   private aiService: AIService;
   private bombiCooldowns: Map<string, number> = new Map(); // userId -> last used timestamp
+  private nicknameUsageCounts: Map<string, { count: number; resetTime: number }> = new Map(); // userId -> {count, resetTime}
+  private channelMessageCounts: Map<string, number> = new Map(); // channelId -> message count for probability
 
   constructor() {
     this.aiService = createAIService(env.GROQ_API_KEY);
@@ -67,6 +69,64 @@ export class MessageRouter {
   }
 
   /**
+   * Check if user can use .nickname command (3 times per 24 hours)
+   */
+  private canUseNicknameCommand(userId: string): { allowed: boolean; remaining?: number; resetTime?: number } {
+    const now = Date.now();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const MAX_USES = 3;
+
+    const usage = this.nicknameUsageCounts.get(userId);
+
+    if (!usage) {
+      // First time using
+      this.nicknameUsageCounts.set(userId, {
+        count: 1,
+        resetTime: now + DAY_MS
+      });
+      return { allowed: true, remaining: MAX_USES - 1, resetTime: now + DAY_MS };
+    }
+
+    // Check if the 24h window has expired
+    if (now >= usage.resetTime) {
+      // Reset the counter
+      this.nicknameUsageCounts.set(userId, {
+        count: 1,
+        resetTime: now + DAY_MS
+      });
+      return { allowed: true, remaining: MAX_USES - 1, resetTime: now + DAY_MS };
+    }
+
+    // Check if user has remaining uses
+    if (usage.count < MAX_USES) {
+      usage.count++;
+      this.nicknameUsageCounts.set(userId, usage);
+      return { allowed: true, remaining: MAX_USES - usage.count, resetTime: usage.resetTime };
+    }
+
+    // User has used all 3 times
+    return { allowed: false, remaining: 0, resetTime: usage.resetTime };
+  }
+
+  /**
+   * Check if we should attach media (GIF or meme) to this response
+   * Uses 2/5 probability - track message count per channel
+   */
+  private shouldAttachMedia(channelId: string): boolean {
+    const count = this.channelMessageCounts.get(channelId) || 0;
+    this.channelMessageCounts.set(channelId, count + 1);
+
+    // Reset after 5 messages
+    if (count >= 5) {
+      this.channelMessageCounts.set(channelId, 1);
+      return false; // First message of new cycle
+    }
+
+    // Attach media on message 2 and 4 of every 5-message cycle
+    return count === 1 || count === 3;
+  }
+
+  /**
    * Main message routing pipeline
    */
   async handleMessage(message: Message, botUserId: string): Promise<void> {
@@ -89,6 +149,12 @@ export class MessageRouter {
       // Check for .bombi command (help for general users)
       if (content === '.bombi') {
         await this.handleBombiCommand(message);
+        return;
+      }
+
+      // Check for .nickname command (self-nicknaming for general users)
+      if (content === '.nickname') {
+        await this.handleSelfNickname(message);
         return;
       }
 
@@ -397,15 +463,65 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           true
         );
 
-        // Send response with allowed mentions configuration to prevent mention parsing
-        await message.reply({
+        // Check if we should attach media (GIF or meme) - 2/5 probability
+        const shouldAttach = this.shouldAttachMedia(channelId);
+        let mediaAttachment: { gif?: string; meme?: any } | null = null;
+
+        if (shouldAttach) {
+          // 50/50 chance between GIF and meme
+          const useGif = Math.random() < 0.5;
+
+          if (useGif) {
+            // Get current personality for GIF search
+            const personalityManager = getPersonalityManager();
+            const activeCharacter = await personalityManager.getActiveCharacter(guildId);
+
+            // Search for GIF based on personality
+            const gifQuery = activeCharacter?.name || 'anime';
+            const gifResult = await mediaService.searchGif(gifQuery);
+
+            if (gifResult) {
+              mediaAttachment = { gif: gifResult.url };
+              logger.info('Attached GIF to response', {
+                channelId,
+                query: gifQuery
+              });
+            }
+          } else {
+            // Search for meme based on conversation
+            const meme = await memeService.fetchMeme(conversationContext);
+
+            if (meme) {
+              mediaAttachment = { meme };
+              logger.info('Attached meme to response', {
+                channelId,
+                subreddit: meme.subreddit
+              });
+            }
+          }
+        }
+
+        // Send response with optional media attachment
+        const replyData: any = {
           content: sanitizedContent,
           allowedMentions: {
             parse: [],
             repliedUser: true,
             users: [userId]
           }
-        });
+        };
+
+        if (mediaAttachment?.gif) {
+          replyData.files = [{ attachment: mediaAttachment.gif, name: 'reaction.gif' }];
+        } else if (mediaAttachment?.meme) {
+          replyData.embeds = [
+            new EmbedBuilder()
+              .setImage(mediaAttachment.meme.imageUrl)
+              .setColor(0xFFA500)
+          ];
+        }
+
+        await message.reply(replyData);
         logger.info(`Bocchi responded to user ${userId} in guild ${guildId}`);
       } else {
         // AI failed, send error message
@@ -1417,6 +1533,74 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
   }
 
   /**
+   * Handle .nickname command (self-nicknaming for regular users)
+   * User can nickname themselves 3 times per 24 hours
+   */
+  private async handleSelfNickname(message: Message): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      // Check rate limit
+      const rateLimitCheck = this.canUseNicknameCommand(message.author.id);
+
+      if (!rateLimitCheck.allowed) {
+        const hoursRemaining = Math.ceil((rateLimitCheck.resetTime! - Date.now()) / (60 * 60 * 1000));
+        await message.reply({
+          content: `you've used all your nickname changes for today. try again in ${hoursRemaining} hour(s)`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return;
+      }
+
+      const nicknameService = getNicknameService();
+      const member = await message.guild.members.fetch(message.author.id);
+
+      if (!member) {
+        await message.reply({
+          content: 'something went wrong... sorry...',
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        return;
+      }
+
+      // Generate and assign new nickname
+      const result = await nicknameService.generateAndAssignNickname(member);
+
+      if (result.success) {
+        const remaining = rateLimitCheck.remaining || 0;
+        let responseText = `you are ${member.nickname} from now on`;
+        if (remaining > 0) {
+          responseText += `. you have ${remaining} nickname change(s) remaining today`;
+        }
+
+        await message.reply({
+          content: responseText,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+        logger.info(`Self-nickname assigned for user ${message.author.id}`);
+      } else {
+        let errorMessage = 'failed to generate a nickname... sorry...';
+        if (result.error === 'role_hierarchy') {
+          errorMessage = 'something went wrong with permissions... sorry...';
+        }
+        await message.reply({
+          content: errorMessage,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to handle self-nickname command', {
+        userId: message.author.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      await message.reply({
+        content: 'something went wrong... sorry...',
+        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+      });
+    }
+  }
+
+  /**
    * Handle ~nickname reset all command
    * Remove server nicknames from all members who have them (admin/staff only)
    */
@@ -1743,7 +1927,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       try {
         const confessionNumber = await confessionService.getNextConfessionNumber(guild.id);
         await confessionService.saveConfession(guild.id, confessionNumber, confessionText);
-        await confessionService.publishConfession(guild, confessionNumber, confessionText);
+        await confessionService.publishConfession(guild, confessionNumber, confessionText, true);
       } catch (error) {
         logger.error('Failed to publish confession', {
           sessionId: session.id,
@@ -1841,6 +2025,39 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       logger.error('Failed to handle confession leave', {
         error: error instanceof Error ? error.message : String(error)
       });
+    }
+  }
+
+  /**
+   * Handle simple confession submit (no booth)
+   */
+  async handleSimpleConfessionSubmit(message: Message, confessionText: string): Promise<void> {
+    if (!message.guild) return;
+
+    try {
+      const confessionService = getConfessionService();
+      const success = await confessionService.publishSimpleConfession(message.guild, confessionText);
+
+      if (success) {
+        if (message.channel.isSendable()) {
+          await message.reply('confession published... it\'s out there now.');
+        }
+        logger.info('Simple confession published', {
+          userId: message.author.id,
+          guildId: message.guild.id
+        });
+      } else {
+        if (message.channel.isSendable()) {
+          await message.reply('failed to publish confession... try again later');
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to handle simple confession submit', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      if (message.channel.isSendable()) {
+        await message.reply('something went wrong... sorry...');
+      }
     }
   }
 

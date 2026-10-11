@@ -1,4 +1,4 @@
--- Personality Selection Schema for Bocchi
+-- Personality Selection Schema for bot personalities
 -- This migration adds support for per-guild personality selection with avatar tracking
 
 -- Personality selection table

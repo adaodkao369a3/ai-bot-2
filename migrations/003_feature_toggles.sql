@@ -1,4 +1,4 @@
--- Feature Toggles Schema for Bocchi
+-- Feature Toggles Schema for bot
 -- This migration adds support for per-guild feature enable/disable states
 
 -- Feature toggles table

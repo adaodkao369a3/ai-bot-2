@@ -1,5 +1,5 @@
 /**
- * Nickname word banks for Bocchi's nickname generator
+ * Nickname word banks for bot's nickname generator
  * Simple random combinations for stupid Discord-style nicknames
  */
 

@@ -1,9 +1,9 @@
 /**
- * Centralized configuration for Bocchi
+ * Centralized configuration for bot
  * All behavioral constants and role IDs should be defined here
  */
 
-export const BOT_NAME = "bocchi";
+export const BOT_NAME = "bot";
 
 // Discord Role IDs
 export const EXTRA_ROLE_ID = "1535285274832277514";

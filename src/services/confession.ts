@@ -1,9 +1,9 @@
 /**
- * Confession booth service for Bocchi
+ * Confession booth service for bot
  * Manages private confession sessions with database persistence
  */
 
-import { Guild, GuildMember, TextChannel, ChannelType, Message, EmbedBuilder } from 'discord.js';
+import { Guild, GuildMember, TextChannel, ChannelType, Message, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from 'discord.js';
 import { query } from '../database/pool';
 import { logger } from '../utils/logger';
 
@@ -24,6 +24,7 @@ interface ConfessionSession {
 
 export class ConfessionService {
   private activeTimers: Map<string, NodeJS.Timeout> = new Map();
+  private lastConfessionMessage: Map<string, { messageId: string; channelId: string }> = new Map(); // guildId -> message info
 
   /**
    * Get the active confession session for a guild
@@ -279,38 +280,95 @@ export class ConfessionService {
   /**
    * Publish confession to the public confessions channel
    */
-  async publishConfession(guild: Guild, confessionNumber: number, confessionText: string): Promise<boolean> {
+  async publishConfession(guild: Guild, confessionNumber: number, confessionText: string, withButton: boolean = false): Promise<{ success: boolean; messageId?: string }> {
     try {
       const confessionsChannel = await guild.channels.fetch(CONFESSIONS_CHANNEL_ID);
-      
+
       if (!confessionsChannel || confessionsChannel.type !== ChannelType.GuildText) {
         logger.error('Confessions channel not found or invalid type', {
           guildId: guild.id,
           channelId: CONFESSIONS_CHANNEL_ID
         });
-        return false;
+        return { success: false };
       }
+
+      // Remove button from previous confession message if exists
+      await this.removeButtonFromLastConfession(guild);
 
       const embed = new EmbedBuilder()
         .setTitle(`confession #${confessionNumber}`)
         .setDescription(`"${confessionText}"`)
         .setColor(0x5865F2);
 
-      await confessionsChannel.send({ embeds: [embed] });
-      
+      let messageContent: any = { embeds: [embed] };
+
+      // Add Confess button if requested
+      if (withButton) {
+        const confessButton = new ButtonBuilder()
+          .setCustomId('confess_simple')
+          .setLabel('Confess')
+          .setStyle(ButtonStyle.Primary);
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(confessButton);
+        messageContent = { embeds: [embed], components: [row] };
+      }
+
+      const sentMessage = await confessionsChannel.send(messageContent);
+
+      // Track this message if it has a button
+      if (withButton && sentMessage) {
+        this.lastConfessionMessage.set(guild.id, {
+          messageId: sentMessage.id,
+          channelId: confessionsChannel.id
+        });
+      }
+
       logger.info('Published confession', {
         guildId: guild.id,
-        confessionNumber
+        confessionNumber,
+        withButton
       });
 
-      return true;
+      return { success: true, messageId: sentMessage?.id };
     } catch (error) {
       logger.error('Failed to publish confession', {
         guildId: guild.id,
         confessionNumber,
         error: error instanceof Error ? error.message : String(error)
       });
-      return false;
+      return { success: false };
+    }
+  }
+
+  /**
+   * Remove button from the last confession message
+   */
+  private async removeButtonFromLastConfession(guild: Guild): Promise<void> {
+    const lastMessage = this.lastConfessionMessage.get(guild.id);
+    if (!lastMessage) return;
+
+    try {
+      const channel = await guild.channels.fetch(lastMessage.channelId);
+      if (!channel || channel.type !== ChannelType.GuildText) return;
+
+      const message = await channel.messages.fetch(lastMessage.messageId);
+      if (message) {
+        await message.edit({ components: [] });
+      }
+
+      this.lastConfessionMessage.delete(guild.id);
+      logger.info('Removed button from last confession', {
+        guildId: guild.id,
+        messageId: lastMessage.messageId
+      });
+    } catch (error) {
+      logger.error('Failed to remove button from last confession', {
+        guildId: guild.id,
+        messageId: lastMessage.messageId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      // Clear the tracking even if edit failed
+      this.lastConfessionMessage.delete(guild.id);
     }
   }
 
@@ -341,7 +399,7 @@ export class ConfessionService {
             try {
               const confessionNumber = await this.getNextConfessionNumber(session.guild_id);
               await this.saveConfession(session.guild_id, confessionNumber, session.confession_text);
-              await this.publishConfession(guild, confessionNumber, session.confession_text);
+              await this.publishConfession(guild, confessionNumber, session.confession_text, true);
             } catch (error) {
               logger.error('Failed to publish recovered confession', {
                 sessionId: session.id,
@@ -391,6 +449,25 @@ export class ConfessionService {
         guildId: guild.id,
         error: error instanceof Error ? error.message : String(error)
       });
+    }
+  }
+
+  /**
+   * Publish a simple confession directly (no booth)
+   */
+  async publishSimpleConfession(guild: Guild, confessionText: string): Promise<boolean> {
+    try {
+      const confessionNumber = await this.getNextConfessionNumber(guild.id);
+      await this.saveConfession(guild.id, confessionNumber, confessionText);
+      const result = await this.publishConfession(guild, confessionNumber, confessionText, true);
+
+      return result.success;
+    } catch (error) {
+      logger.error('Failed to publish simple confession', {
+        guildId: guild.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
     }
   }
 

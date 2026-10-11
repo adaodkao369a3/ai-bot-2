@@ -64,7 +64,7 @@ export function createDiscordClient(): Client {
             if (session.confession_text && session.confession_text.trim().length > 0) {
               const confessionNumber = await confessionService.getNextConfessionNumber(guildId);
               await confessionService.saveConfession(guildId, confessionNumber, session.confession_text);
-              await confessionService.publishConfession(guild, confessionNumber, session.confession_text);
+              await confessionService.publishConfession(guild, confessionNumber, session.confession_text, true);
             }
           } catch (error) {
             logger.error('Failed to handle expired confession session during recovery', {
@@ -139,6 +139,24 @@ export function createDiscordClient(): Client {
         } as any;
 
         await messageRouter.handleConfessionLeave(mockMessage);
+        return;
+      } else if (customId === 'confess_simple') {
+        // Simple confession button (no booth)
+        const modal = new ModalBuilder()
+          .setCustomId(`confess_simple_submit_${interaction.user.id}`)
+          .setTitle('Confess');
+
+        const confessionInput = new TextInputBuilder()
+          .setCustomId('confession_text')
+          .setLabel('Your confession')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000);
+
+        const firstActionRow = new ActionRowBuilder<TextInputBuilder>().addComponents(confessionInput);
+        modal.addComponents(firstActionRow);
+
+        await interaction.showModal(modal);
         return;
       }
 
@@ -312,6 +330,23 @@ export function createDiscordClient(): Client {
         } as any;
 
         await messageRouter.handleConfessionSubmit(mockMessage, confessionText);
+        return;
+      } else if (customId.startsWith('confess_simple_submit_')) {
+        const confessionText = interaction.fields.getTextInputValue('confession_text');
+
+        await interaction.deferReply();
+
+        const mockMessage = {
+          guild: interaction.guild,
+          author: interaction.user,
+          channel: interaction.channel,
+          channelId: interaction.channelId,
+          reply: async (content: any) => {
+            await interaction.editReply(content);
+          }
+        } as any;
+
+        await messageRouter.handleSimpleConfessionSubmit(mockMessage, confessionText);
         return;
       }
     }

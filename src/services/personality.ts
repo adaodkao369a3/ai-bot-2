@@ -1,5 +1,5 @@
 /**
- * Bocchi personality foundation
+ * Bot personality foundation
  * Now delegates to the personality manager for character-specific responses
  */
 

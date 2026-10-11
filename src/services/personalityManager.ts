@@ -1,5 +1,5 @@
 /**
- * Personality management service for Bocchi
+ * Personality management service for Bocchi/Nocchi
  * Handles personality selection, database persistence, and character application
  */
 
@@ -106,8 +106,8 @@ export class PersonalityManager {
       });
     }
 
-    // Return default personality (bocchi_thug as current default)
-    return 'bocchi_thug';
+    // Return default personality (bocchi_shy as current default)
+    return 'bocchi_shy';
   }
 
   /**
@@ -118,8 +118,8 @@ export class PersonalityManager {
     const character = getCharacter(personalityId);
 
     if (!character) {
-      logger.warn(`Character not found for personality ID: ${personalityId}, falling back to bocchi_thug`);
-      return getCharacter('bocchi_thug')!;
+      logger.warn(`Character not found for personality ID: ${personalityId}, falling back to bocchi_shy`);
+      return getCharacter('bocchi_shy')!;
     }
 
     return character;
