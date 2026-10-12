@@ -5,6 +5,8 @@
 
 import { mediaService, GifResult } from './media';
 import { logger } from '../utils/logger';
+import { variety } from './variety';
+import { recentMedia as sharedRecentMedia } from './recentMedia';
 
 interface InteractionResponse {
   text: string;
@@ -192,46 +194,41 @@ export class InteractionPoolsService {
   /**
    * Get a randomized interaction response with media
    */
-  async getInteractionResponse(interaction: string): Promise<InteractionResponse | null> {
+  async getInteractionResponse(interaction: string, guildId?: string): Promise<InteractionResponse | null> {
     const pool = this.pools[interaction];
     if (!pool) {
       logger.warn(`Unknown interaction type: ${interaction}`);
       return null;
     }
 
-    // Select random text
-    const text = pool.texts[Math.floor(Math.random() * pool.texts.length)];
+    // Pick a text that was not used the last few times for this interaction
+    const text = variety.pick(`interaction:${interaction}`, pool.texts);
 
     // Get GIF that hasn't been used recently
-    const gif = await this.getRandomGif(interaction, pool.searchQueries);
-    
+    const gif = await this.getRandomGif(interaction, pool.searchQueries, guildId);
+
     return { text, gif };
   }
 
   /**
-   * Get a random GIF avoiding recently used ones
+   * Get a random GIF that was not posted recently (in this interaction or, when the server is
+   * known, anywhere by the bot in that server). If every result is a repeat, no GIF is sent:
+   * a reply without a GIF is better than the same GIF again.
    */
-  private async getRandomGif(interaction: string, searchQueries: string[]): Promise<GifResult | undefined> {
+  private async getRandomGif(interaction: string, searchQueries: string[], guildId?: string): Promise<GifResult | undefined> {
     const recent = this.recentMedia.get(interaction) || [];
-    
-    // Try each search query until we find a GIF not in recent
+    const scope = guildId ? `gif:${guildId}` : null;
+    const isUsed = (url: string) => recent.includes(url) || (scope !== null && sharedRecentMedia.has(scope, url));
+
     for (const query of searchQueries) {
-      const gif = await mediaService.searchGif(query);
-      if (gif && !recent.includes(gif.url)) {
-        // Add to recent and maintain size limit
+      const gif = await mediaService.searchGif(query, isUsed);
+      if (gif) {
         recent.push(gif.url);
         if (recent.length > this.AVOID_RECENT_COUNT) {
           recent.shift();
         }
         this.recentMedia.set(interaction, recent);
-        return gif;
-      }
-    }
-
-    // Fallback: if all recent, just return whatever we got
-    for (const query of searchQueries) {
-      const gif = await mediaService.searchGif(query);
-      if (gif) {
+        if (scope) sharedRecentMedia.add(scope, gif.url);
         return gif;
       }
     }

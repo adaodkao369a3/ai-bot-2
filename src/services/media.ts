@@ -45,7 +45,8 @@ export class MediaService {
   private readonly klipyTimeoutMs = 8000;
   private readonly youtubeTimeoutMs = 8000;
 
-  async searchGif(query: string): Promise<GifResult | null> {
+  /** @param isUsed returns true for a GIF link that was posted recently, so it is skipped */
+  async searchGif(query: string, isUsed: (url: string) => boolean = () => false): Promise<GifResult | null> {
     const key = env.KLIPY_KEY;
     if (!key) {
       logger.warn('GIF request skipped: KLIPY_KEY is not configured');
@@ -73,7 +74,10 @@ export class MediaService {
       }
 
       const data = (await response.json()) as KlipyResponse;
-      const results = data.results?.filter(item => this.extractGifUrl(item));
+      const results = data.results?.filter(item => {
+        const url = this.extractGifUrl(item);
+        return url !== null && !isUsed(url);
+      });
 
       if (!results || results.length === 0) {
         return null;
@@ -103,7 +107,8 @@ export class MediaService {
     }
   }
 
-  async searchYoutube(query: string): Promise<YoutubeResult | null> {
+  /** @param isUsed returns true for a video id that was posted recently, so it is skipped */
+  async searchYoutube(query: string, isUsed: (videoId: string) => boolean = () => false): Promise<YoutubeResult | null> {
     const key = env.YOUTUBE_API_KEY;
     if (!key) {
       logger.warn('YouTube request skipped: YOUTUBE_API_KEY is not configured');
@@ -114,7 +119,7 @@ export class MediaService {
       part: 'snippet',
       q: query,
       type: 'video',
-      maxResults: '1',
+      maxResults: '5',
       safeSearch: 'moderate',
       key
     });
@@ -133,7 +138,7 @@ export class MediaService {
       }
 
       const data = (await response.json()) as YoutubeSearchResponse;
-      const item = data.items?.find(candidate => candidate.id?.videoId);
+      const item = data.items?.find(candidate => candidate.id?.videoId && !isUsed(candidate.id.videoId));
 
       if (!item?.id?.videoId) {
         return null;

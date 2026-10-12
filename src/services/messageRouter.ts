@@ -21,12 +21,17 @@ import { memeService } from './meme';
 import { mediaService } from './media';
 import { interactionPoolsService } from './interactionPools';
 import { responseMemoryService } from './responseMemory';
+import { gifCopyService } from './gifCopy';
+import { customEmojiService, toShortcodes, EmojiOffer, GuildEmoji } from './customEmoji';
+import { recentMedia } from './recentMedia';
+import { variety } from './variety';
+import { imageFileName, randomDelayMs, sleep } from '../utils/discordMedia';
 import { initNicknameService, getNicknameService } from './nickname';
 import { initConfessionService, getConfessionService } from './confession';
 import { initConfessionBoothConversationService, getConfessionBoothConversationService } from './confessionBoothConversation';
 import { featureToggleService, Feature } from './featureToggle';
 import { channelRestrictionsService } from './channelRestrictions';
-import { GUIDE_CHANNEL_ID } from '../config';
+import { GUIDE_CHANNEL_ID, GIF_LIBRARY_CHANCE } from '../config';
 import { logger } from '../utils/logger';
 import { env } from '../utils/env';
 
@@ -35,7 +40,6 @@ export class MessageRouter {
   private bombiCooldowns: Map<string, number> = new Map(); // userId -> last used timestamp
   private nicknameUsageCounts: Map<string, { count: number; resetTime: number }> = new Map(); // userId -> {count, resetTime}
   private channelMessageCounts: Map<string, number> = new Map(); // channelId -> message count for probability
-  private usedGifUrls: Map<string, Set<string>> = new Map(); // guildId -> set of used GIF URLs
 
   constructor() {
     this.aiService = createAIService(env.GROQ_API_KEY);
@@ -172,8 +176,9 @@ export class MessageRouter {
       const channelId = message.channelId;
       const content = message.content.trim();
 
-      // Update channel activity for idle meme tracking
-      memeService.updateChannelActivity(channelId);
+      // Keep the "bot was called here" channel marked busy for the idle meme. This never starts
+      // an idle meme by itself: only calling the bot does (see markBotCalled below).
+      memeService.noteActivity(guildId, channelId);
 
       // Check for .bombi command (help for general users)
       if (content === '.bombi') {
@@ -276,6 +281,12 @@ export class MessageRouter {
 
       // Step 3: Check if message is addressing Bocchi
       const isAddressing = await addressingService.isAddressingBot(message, botUserId, guildId);
+
+      // GIF library + copycat: sees every message that got past the checks above, addressed or
+      // not. Not awaited on purpose: it may wait a few seconds before copying a GIF and must
+      // never delay a reply. It never throws.
+      void gifCopyService.handleMessage(message, isAddressing);
+
       if (!isAddressing) {
         return;
       }
@@ -305,6 +316,9 @@ export class MessageRouter {
         // Record the interaction
         rateLimitService.recordInteraction(userId);
       }
+
+      // The bot is being called here: this channel is where the next idle meme may go
+      memeService.markBotCalled(guildId, channelId);
 
       // Step 6: Add message to conversation context and update activity
       const globalDisplayName = message.author.globalName ?? message.author.displayName;
@@ -337,7 +351,7 @@ export class MessageRouter {
           'you\'re gonna have to try harder than that'
         ];
         await message.reply({
-          content: securityMessages[Math.floor(Math.random() * securityMessages.length)],
+          content: variety.pick(securityMessages.join('|'), securityMessages),
           allowedMentions: { parse: [], repliedUser: true, users: [userId] }
         });
         return;
@@ -460,17 +474,44 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       // Step 16: Generate AI response
       // Show the "Bocchi is typing..." indicator in Discord while we work,
       // and keep refreshing it since a typing indicator only lasts ~10s.
+      const systemPrompt = await personalityService.getSystemPrompt(guildId);
+      // For some replies only, the AI may use one of the server's custom emojis
+      const emojiOffer = this.offerCustomEmoji(message, channelId);
       const stopTyping = this.startTypingIndicator(message);
       let aiResponse;
       try {
         aiResponse = await this.aiService.generateResponse({
-          systemPrompt: await personalityService.getSystemPrompt(guildId),
+          systemPrompt,
           userMessage: cleanContent,
           conversationContext,
           memoryContext,
           replyContext,
-          userName: globalDisplayName
+          emojiContext: emojiOffer?.promptText,
+          userName: globalDisplayName,
+          label: 'normal-reply'
         });
+
+        // About to say (nearly) the same thing as a recent reply in this channel? Ask once for
+        // something different. This costs one extra AI call, but only when it actually repeats.
+        if (aiResponse.success && aiResponse.content) {
+          const firstTry = responseSanitizer.sanitize(aiResponse.content);
+          if (responseMemoryService.isTooSimilar(firstTry, channelId)) {
+            logger.info('Reply too similar to a recent one, asking for a different reply', { channelId });
+            const retry = await this.aiService.generateResponse({
+              systemPrompt,
+              userMessage: cleanContent,
+              conversationContext: `${conversationContext}\n\nYou already said this recently, so say something different this time: "${firstTry.slice(0, 200)}"`,
+              memoryContext,
+              replyContext,
+              emojiContext: emojiOffer?.promptText,
+              userName: globalDisplayName,
+              label: 'repeat-retry'
+            });
+            if (retry.success && retry.content) {
+              aiResponse = retry;
+            }
+          }
+        }
       } finally {
         stopTyping();
       }
@@ -478,58 +519,63 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       // Step 17: Handle AI response
       if (aiResponse.success && aiResponse.content) {
         // Sanitize the response to prevent mention abuse and format leakage
-        const sanitizedContent = responseSanitizer.sanitize(aiResponse.content);
+        const cleanedReply = responseSanitizer.sanitize(aiResponse.content);
 
-        // Add to response memory to avoid repetition
-        responseMemoryService.addResponse(sanitizedContent);
+        // :name: -> real server emoji, and enforce the emoji limits / no-repeat rules
+        const sanitizedContent = customEmojiService.process(cleanedReply, channelId, guildId, emojiOffer).text;
 
-        // Add Bocchi's response to conversation context (use sanitized version)
+        // Remember this reply (per channel) so the bot notices if it is about to say it again
+        responseMemoryService.addResponse(sanitizedContent, channelId);
+
+        // Add Bocchi's response to conversation context (emojis as :name: to save tokens)
         conversationContextService.addMessage(
           channelId,
           botUserId,
           'Bocchi',
-          sanitizedContent,
+          toShortcodes(sanitizedContent),
           true
         );
 
-        // Check if we should attach a GIF - 2/5 probability (personality/emotion related)
-        const shouldAttachGif = this.shouldAttachMedia(channelId);
+        // Maybe add a GIF (about 2 of every 5 replies). First choice: a GIF somebody in this
+        // server posted earlier whose meaning fits what the bot is saying. Otherwise a search.
+        // Either way the same GIF is never posted twice in a row (shared recent-media memory).
         let gifAttachment: string | null = null;
+        let rememberedGifUrl: string | null = null;
 
-        if (shouldAttachGif) {
-          // Get current personality for GIF search
-          const personalityManager = getPersonalityManager();
-          const activeCharacter = await personalityManager.getActiveCharacter(guildId);
+        if (this.shouldAttachMedia(channelId)) {
+          const gifScope = `gif:${guildId}`;
 
-          // Search for GIF based on personality emotion (not just name)
-          const emotionQueries = this.getPersonalityEmotionQueries(activeCharacter?.name);
-          const usedGifs = this.usedGifUrls.get(guildId) || new Set<string>();
+          if (Math.random() < GIF_LIBRARY_CHANCE && await featureToggleService.isEnabled(guildId, 'gif')) {
+            const remembered = await gifCopyService.pickForReply(guildId, [sanitizedContent, cleanContent]);
+            if (remembered) {
+              rememberedGifUrl = remembered.url;
+              gifCopyService.recordPosted(guildId, channelId, null, remembered.url, false);
+            }
+          }
 
-          // Try each emotion query until we find an unused GIF
-          for (const query of emotionQueries) {
-            let gifResult = await mediaService.searchGif(query);
+          if (!rememberedGifUrl) {
+            // Get current personality for GIF search
+            const personalityManager = getPersonalityManager();
+            const activeCharacter = await personalityManager.getActiveCharacter(guildId);
 
-            if (gifResult && !usedGifs.has(gifResult.url)) {
-              gifAttachment = gifResult.url;
-              // Track this GIF as used
-              if (!this.usedGifUrls.has(guildId)) {
-                this.usedGifUrls.set(guildId, new Set<string>());
+            // Search for GIF based on personality emotion (not just name)
+            const emotionQueries = this.getPersonalityEmotionQueries(activeCharacter?.name);
+
+            // Try each emotion query until we find a GIF that was not posted recently
+            for (const query of emotionQueries) {
+              const gifResult = await mediaService.searchGif(query, recentMedia.predicate(gifScope));
+
+              if (gifResult) {
+                gifAttachment = gifResult.url;
+                recentMedia.add(gifScope, gifResult.url);
+
+                logger.info('Attached GIF to response', {
+                  channelId,
+                  query,
+                  totalUsed: recentMedia.size(gifScope)
+                });
+                break;
               }
-              this.usedGifUrls.get(guildId)!.add(gifResult.url);
-
-              // Limit the set size to prevent memory issues (keep last 100)
-              const guildGifSet = this.usedGifUrls.get(guildId)!;
-              if (guildGifSet.size > 100) {
-                const firstItem = guildGifSet.values().next().value as string;
-                guildGifSet.delete(firstItem);
-              }
-
-              logger.info('Attached GIF to response', {
-                channelId,
-                query,
-                totalUsed: guildGifSet.size
-              });
-              break;
             }
           }
         }
@@ -550,6 +596,19 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
         await message.reply(replyData);
         logger.info(`Bot responded to user ${userId} in guild ${guildId}`);
+
+        // A remembered GIF goes out as its own message right after the reply, like a person would
+        if (rememberedGifUrl && message.channel.isSendable()) {
+          try {
+            await sleep(randomDelayMs(800, 1800));
+            await message.channel.send({ content: rememberedGifUrl, allowedMentions: { parse: [] } });
+            logger.info('[gif-library] reused a remembered GIF', { guildId, channelId });
+          } catch (error) {
+            logger.warn('[gif-library] could not send the remembered GIF', {
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
       } else {
         // AI failed, send error message
         const errorMessage = await personalityService.getErrorMessage(guildId);
@@ -578,6 +637,19 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
       // Don't crash the bot on individual message errors
       // Just log and continue
     }
+  }
+
+  /** Server custom emojis the bot may use: available ones that are not limited to certain roles. */
+  private getUsableGuildEmojis(guild: Guild): GuildEmoji[] {
+    return [...guild.emojis.cache.values()]
+      .filter(emoji => emoji.available !== false && Boolean(emoji.id) && Boolean(emoji.name) && emoji.roles.cache.size === 0)
+      .map(emoji => ({ id: emoji.id, name: emoji.name as string, animated: Boolean(emoji.animated) }));
+  }
+
+  /** Decide whether this reply may use a custom emoji (only some replies may). */
+  private offerCustomEmoji(message: Message, channelId: string): EmojiOffer | null {
+    if (!message.guild) return null;
+    return customEmojiService.offer(message.guild.id, channelId, this.getUsableGuildEmojis(message.guild));
   }
 
   /**
@@ -632,14 +704,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           'memes are turned off here.'
         ];
         await message.reply({
-          content: messages[Math.floor(Math.random() * messages.length)],
+          content: variety.pick(messages.join('|'), messages),
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
 
       const category = this.extractMemeCategory(content);
-      const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`, category, channelId);
+      const meme = await memeService.fetchMeme(`${conversationContext}\n${cleanContent}`, category, guildId);
       if (!meme) {
         const messages = [
           'nahhh couldn\'t find one',
@@ -648,7 +720,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           'search failed, try again'
         ];
         await message.reply({
-          content: messages[Math.floor(Math.random() * messages.length)],
+          content: variety.pick(messages.join('|'), messages),
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
@@ -660,15 +732,21 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         'gotchu',
         'pulling one up now'
       ];
-      await message.reply({
-        content: successMessages[Math.floor(Math.random() * successMessages.length)],
-        embeds: [
-          new EmbedBuilder()
-            .setImage(meme.imageUrl)
-            .setColor(0xFFA500)
-        ],
-        allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
-      });
+      const successLine = variety.pick(successMessages.join('|'), successMessages);
+      try {
+        // A plain image, not an embed card
+        await message.reply({
+          content: successLine,
+          files: [{ attachment: meme.imageUrl, name: imageFileName(meme.imageUrl) }],
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      } catch {
+        // Upload failed (too big, host blocked...): send the plain link instead
+        await message.reply({
+          content: `${successLine}\n${meme.imageUrl}`,
+          allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
+        });
+      }
       return true;
     }
 
@@ -682,13 +760,13 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           'gifs are turned off here.'
         ];
         await message.reply({
-          content: messages[Math.floor(Math.random() * messages.length)],
+          content: variety.pick(messages.join('|'), messages),
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
 
-      const interactionResponse = await interactionPoolsService.getInteractionResponse(gifAction);
+      const interactionResponse = await interactionPoolsService.getInteractionResponse(gifAction, guildId);
       if (!interactionResponse) {
         const messages = [
           `couldn't find a ${gifAction} gif right now`,
@@ -697,7 +775,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           `can't find a ${gifAction} gif`
         ];
         await message.reply({
-          content: messages[Math.floor(Math.random() * messages.length)],
+          content: variety.pick(messages.join('|'), messages),
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
@@ -732,13 +810,14 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           'youtube is turned off here.'
         ];
         await message.reply({
-          content: messages[Math.floor(Math.random() * messages.length)],
+          content: variety.pick(messages.join('|'), messages),
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
 
-      const video = await mediaService.searchYoutube(youtubeQuery);
+      const youtubeScope = `yt:${guildId}`;
+      const video = await mediaService.searchYoutube(youtubeQuery, recentMedia.predicate(youtubeScope));
       if (!video) {
         const messages = [
           'nahhh couldn\'t find one',
@@ -747,11 +826,13 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           'no results found'
         ];
         await message.reply({
-          content: messages[Math.floor(Math.random() * messages.length)],
+          content: variety.pick(messages.join('|'), messages),
           allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
         });
         return true;
       }
+
+      recentMedia.add(youtubeScope, video.videoId);
 
       // IMPORTANT: use the watch URL as message content, not an EmbedBuilder
       // URL. Discord renders this as its native YouTube video player.
@@ -762,7 +843,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         'pulling it up now'
       ];
       await message.reply({
-        content: `${successMessages[Math.floor(Math.random() * successMessages.length)]}\nhttps://www.youtube.com/watch?v=${video.videoId}`,
+        content: `${variety.pick(successMessages.join('|'), successMessages)}\nhttps://www.youtube.com/watch?v=${video.videoId}`,
         allowedMentions: { parse: [], repliedUser: true, users: [message.author.id] }
       });
       return true;
@@ -1036,7 +1117,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         'online...',
         'here...'
       ];
-      await message.reply(messages[Math.floor(Math.random() * messages.length)]);
+      await message.reply(variety.pick(messages.join('|'), messages));
       logger.info(`Bot enabled for guild ${message.guild.id} by ${message.author.id}`);
     } catch (error) {
       logger.error('Failed to enable bot', {
@@ -1060,7 +1141,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         'taking a break...',
         'see you...'
       ];
-      await message.reply(messages[Math.floor(Math.random() * messages.length)]);
+      await message.reply(variety.pick(messages.join('|'), messages));
       logger.info(`Bot disabled for guild ${message.guild.id} by ${message.author.id}`);
     } catch (error) {
       logger.error('Failed to disable bot', {
@@ -1850,7 +1931,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
           'wait. someone\'s already in the booth. have some shame and patience.',
           'the booth is occupied. wait your turn.'
         ];
-        const response = responses[Math.floor(Math.random() * responses.length)];
+        const response = variety.pick(responses.join('|'), responses);
         
         if (message.channel.isSendable()) {
           await message.reply({
@@ -1867,7 +1948,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
         'alright... the booth is open.',
         'come to the booth.'
       ];
-      const response = responses[Math.floor(Math.random() * responses.length)];
+      const response = variety.pick(responses.join('|'), responses);
 
       const enterButton = new ButtonBuilder()
         .setCustomId(`confession_modal_${message.author.id}`)

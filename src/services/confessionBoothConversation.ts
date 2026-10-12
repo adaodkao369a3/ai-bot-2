@@ -219,7 +219,8 @@ export class ConfessionBoothConversationService {
       conversationContext: conversationContext,
       confessionContext: `ORIGINAL CONFESSION: "${session.originalConfession}"`,
       userName: session.userName,
-      maxTokens: 400 // Keep responses reasonably short
+      maxTokens: 400, // Keep responses reasonably short
+      label: 'confession-booth'
     };
 
     const response = await this.aiService.generateResponse(request);
@@ -246,7 +247,8 @@ export class ConfessionBoothConversationService {
       userMessage: '(This is the initial response after receiving a confession. Acknowledge what they confessed about naturally, mention them by name, and invite them to explain more or continue.)',
       confessionContext: `ORIGINAL CONFESSION: "${session.originalConfession}"`,
       userName: session.userName,
-      maxTokens: 400
+      maxTokens: 400,
+      label: 'confession-booth-initial'
     };
 
     const response = await this.aiService.generateResponse(request);

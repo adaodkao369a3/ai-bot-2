@@ -11,7 +11,7 @@ import { getConfessionService } from '../services/confession';
 import { getPersonalityManager } from '../services/personalityManager';
 import { getConfessionBoothConversationService } from '../services/confessionBoothConversation';
 import { channelRestrictionsService } from '../services/channelRestrictions';
-import { memeService } from '../services/meme';
+import { runIdleMemeCheck } from '../services/idleMeme';
 
 export function createDiscordClient(): Client {
   // Create client with intents required for message-based interaction
@@ -49,49 +49,15 @@ export function createDiscordClient(): Client {
       await client.user.setActivity('meow...', { type: ActivityType.Watching });
     }
 
-    // Start idle meme drop checker (runs every minute)
-    setInterval(async () => {
-      for (const [guildId, guild] of client.guilds.cache) {
-        // Check each text channel in the guild
-        for (const [channelId, channel] of guild.channels.cache) {
-          if (channel.isTextBased() && !channel.isThread()) {
-            try {
-              // Check if we should drop a meme in this channel
-              if (memeService.shouldDropIdleMeme(channelId)) {
-                const meme = await memeService.fetchMeme('', undefined, channelId);
-
-                if (meme) {
-                  // Send the meme to the channel
-                  await channel.send({
-                    embeds: [
-                      {
-                        image: { url: meme.imageUrl },
-                        color: 0xFFA500
-                      }
-                    ]
-                  });
-
-                  // Record that we dropped a meme
-                  memeService.recordMemeDrop(channelId);
-
-                  logger.info('Idle meme dropped', {
-                    guildId,
-                    channelId,
-                    subreddit: meme.subreddit
-                  });
-                }
-              }
-            } catch (error) {
-              logger.debug('Failed to check/drop idle meme', {
-                guildId,
-                channelId,
-                error: error instanceof Error ? error.message : String(error)
-              });
-            }
-          }
-        }
-      }
-    }, 60 * 1000); // Check every minute
+    // Idle meme checker (runs every minute). It only acts on the channel where the bot was
+    // last called, once that channel has gone quiet, and only once per call (see idleMeme.ts).
+    setInterval(() => {
+      runIdleMemeCheck(client).catch((error) => {
+        logger.debug('Idle meme check failed', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }, 60 * 1000);
 
     // Recover active confession sessions
     const confessionService = getConfessionService();

@@ -1,18 +1,27 @@
 /**
  * Meme service for Bocchi.
- * Fetches real memes from the meme API with validation and fallback.
- * Supports idle-based meme drops and explicit meme requests.
+ * Fetches real memes from the meme API with validation and fallback, never repeating a meme
+ * that was posted recently, and decides when an "idle meme" should be dropped.
+ *
+ * Idle meme rules (the whole point of the "session" below):
+ *  - A session starts when someone CALLS the bot in a channel (one session per server: the
+ *    channel where the bot was called last).
+ *  - Once that channel has been quiet for ~5 minutes (+ a little random extra) the bot may
+ *    drop ONE meme in that channel.
+ *  - After the drop the session is finished. No more memes until someone calls the bot again.
+ *  - Channels where nobody called the bot never get memes, no matter how active they are.
  */
 
 import {
   MEME_API_URL,
   MEME_IDLE_ENABLED,
-  MEME_IDLE_INACTIVITY_MINUTES,
-  MEME_IDLE_PROBABILITY,
-  MEME_IDLE_COOLDOWN_MINUTES,
+  MEME_IDLE_AFTER_MS,
+  MEME_IDLE_JITTER_MS,
+  MEME_IDLE_SESSION_MAX_MS,
   MEME_FETCH_TIMEOUT_MS
 } from '../config';
 import { logger } from '../utils/logger';
+import { recentMedia } from './recentMedia';
 
 interface MemeApiResponse {
   title: string;
@@ -31,120 +40,127 @@ export interface Meme {
   verified: boolean;
 }
 
-interface ChannelIdleState {
-  lastMessageTime: number;
-  lastMemeDropTime: number;
-  lastMemeReplyTime: number;
-  conversationStartTime: number;
-  awaitingReply: boolean;
-  lastConversationTime: number;
+/** One "the bot was called here" session (at most one per server). */
+interface IdleSession {
+  channelId: string;
+  lastCalledAt: number;
+  lastActivityAt: number; // last message from anyone in that channel
+  quietNeededMs: number; // how long the channel must stay quiet (5 min + jitter)
+  dropped: boolean; // true once the one meme for this session has been dropped
+}
+
+export interface DueIdleMeme {
+  guildId: string;
+  channelId: string;
 }
 
 export class MemeService {
-  private channelStates: Map<string, ChannelIdleState> = new Map();
-  private usedMemeUrls: Map<string, Set<string>> = new Map(); // channelId -> set of used meme URLs
+  // guildId -> the session for the channel where the bot was called last
+  private sessions: Map<string, IdleSession> = new Map();
+
+  constructor(
+    private readonly now: () => number = () => Date.now(),
+    private readonly random: () => number = () => Math.random()
+  ) {}
 
   /**
-   * Check if a meme should be dropped based on inactivity
-   * - Only drop memes when the channel is dead (inactive for at least 15 minutes)
-   * - If no reply to the last meme, stop dropping until someone talks again
-   * - Only drop memes after 15 minutes of inactivity
+   * Someone called the bot in this channel. Starts (or restarts) the session for the server:
+   * this channel becomes "where the bot was last called" and a new meme is allowed again.
    */
-  shouldDropIdleMeme(channelId: string): boolean {
+  markBotCalled(guildId: string, channelId: string): void {
+    const now = this.now();
+    this.sessions.set(guildId, {
+      channelId,
+      lastCalledAt: now,
+      lastActivityAt: now,
+      quietNeededMs: MEME_IDLE_AFTER_MS + Math.floor(this.random() * MEME_IDLE_JITTER_MS),
+      dropped: false
+    });
+  }
+
+  /**
+   * Any message in a channel. Only counts for the channel of the current session (it keeps the
+   * channel "busy"); it NEVER creates a session, so chatting somewhere does not earn a meme.
+   */
+  noteActivity(guildId: string, channelId: string): void {
+    const session = this.sessions.get(guildId);
+    if (session && session.channelId === channelId) {
+      session.lastActivityAt = this.now();
+    }
+  }
+
+  /**
+   * Sessions whose channel has been quiet long enough for the one idle meme.
+   * The caller still has to run its own checks (bot enabled, channel allowed, meme toggle...).
+   */
+  getDueIdleMemes(): DueIdleMeme[] {
     if (!MEME_IDLE_ENABLED) {
-      return false;
+      return [];
     }
 
-    const now = Date.now();
-    const state = this.channelStates.get(channelId);
+    const now = this.now();
+    const due: DueIdleMeme[] = [];
 
-    // Only consider channels that have been initialized through activity
-    if (!state) {
-      return false;
-    }
+    for (const [guildId, session] of this.sessions) {
+      if (session.dropped) continue;
 
-    const fifteenMinutes = 15 * 60 * 1000;
-    const thirtyMinutes = 30 * 60 * 1000;
-    const timeSinceLastMeme = now - state.lastMemeDropTime;
-    const timeSinceLastMessage = now - state.lastMessageTime;
-
-    // If we're waiting for a reply, don't drop more memes
-    if (state.awaitingReply) {
-      // If it's been more than 30 minutes with no reply, reset the state
-      if (timeSinceLastMeme > thirtyMinutes) {
-        state.awaitingReply = false;
-        this.channelStates.set(channelId, state);
-        return false;
+      // A call from long ago is stale: forget it instead of dropping a random meme much later
+      if (now - session.lastCalledAt > MEME_IDLE_SESSION_MAX_MS) {
+        this.sessions.delete(guildId);
+        continue;
       }
-      return false;
-    }
 
-    // Only drop memes if the channel has been inactive for at least 15 minutes
-    if (timeSinceLastMessage >= fifteenMinutes) {
-      // Also ensure at least 15 minutes since last meme drop
-      if (timeSinceLastMeme >= fifteenMinutes) {
-        return true;
+      if (now - session.lastActivityAt >= session.quietNeededMs) {
+        due.push({ guildId, channelId: session.channelId });
       }
     }
 
-    return false;
+    return due;
   }
 
   /**
-   * Update channel activity state and mark that we got a reply
+   * The idle meme was handled (dropped, or deliberately skipped): finish the session so it can
+   * not fire again until the bot is called again.
    */
-  updateChannelActivity(channelId: string): void {
-    const state = this.channelStates.get(channelId) || {
-      lastMessageTime: Date.now(),
-      lastMemeDropTime: 0,
-      lastMemeReplyTime: 0,
-      conversationStartTime: Date.now(),
-      awaitingReply: false,
-      lastConversationTime: Date.now()
-    };
-    state.lastMessageTime = Date.now();
-    state.lastConversationTime = Date.now();
-    state.awaitingReply = false; // We got a reply, so we can drop memes again
-    this.channelStates.set(channelId, state);
-  }
-
-
-
-  /**
-   * Record that a meme was dropped for cooldown tracking
-   */
-  recordMemeDrop(channelId: string): void {
-    const state = this.channelStates.get(channelId);
-    if (state) {
-      state.lastMemeDropTime = Date.now();
-      state.awaitingReply = true; // Now we wait for a reply
-      this.channelStates.set(channelId, state);
+  finishSession(guildId: string): void {
+    const session = this.sessions.get(guildId);
+    if (session) {
+      session.dropped = true;
     }
   }
 
   /**
    * Fetch a meme that roughly matches the supplied conversation.
-   * Implements fallback strategy: specific category -> broader search -> generic meme
-   * Also ensures the meme hasn't been used recently in this channel
+   * Implements fallback strategy: specific category -> broader search -> generic meme.
+   * A meme that was posted recently in the same scope (usually the server) is never returned.
+   *
+   * @param scopeId what "recently posted" is measured in; pass the guild id so the same meme does
+   *                not show up in two channels of one server either
    */
-  async fetchMeme(conversationText = '', requestedCategory?: string, channelId?: string): Promise<Meme | null> {
-    const usedMemes: Set<string> = channelId ? (this.usedMemeUrls.get(channelId) || new Set<string>()) : new Set<string>();
+  async fetchMeme(conversationText = '', requestedCategory?: string, scopeId?: string): Promise<Meme | null> {
+    const scope = `meme:${scopeId ?? 'global'}`;
+    const isUsed = (url: string, title?: string): boolean =>
+      recentMedia.has(scope, url) || (title !== undefined && recentMedia.has(scope, `title:${title.toLowerCase().trim()}`));
+
+    const finish = (meme: Meme): Meme => {
+      recentMedia.add(scope, meme.imageUrl);
+      recentMedia.add(scope, `title:${meme.title.toLowerCase().trim()}`);
+      return meme;
+    };
 
     // If specific category requested, try that first with more attempts
     if (requestedCategory) {
-      const categoryMeme = await this.fetchFromCategory(requestedCategory, usedMemes);
+      const categoryMeme = await this.fetchFromCategory(requestedCategory, isUsed);
       if (categoryMeme) {
-        this.trackUsedMeme(channelId, categoryMeme.imageUrl);
-        return categoryMeme;
+        return finish(categoryMeme);
       }
 
       // Try related subreddits if the specific category fails
       const relatedSubreddits = this.getRelatedSubreddits(requestedCategory);
       for (const subreddit of relatedSubreddits) {
-        const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`, usedMemes);
+        const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`, isUsed);
         if (meme) {
-          this.trackUsedMeme(channelId, meme.imageUrl);
-          return meme;
+          return finish(meme);
         }
       }
     }
@@ -157,46 +173,24 @@ export class MemeService {
       for (let attempt = 0; attempt < maxAttemptsPerSubreddit; attempt++) {
         const meme = await this.fetchFromEndpoint(
           subreddit === 'memes' ? MEME_API_URL : `${MEME_API_URL}/${subreddit}`,
-          usedMemes
+          isUsed
         );
 
         if (meme) {
-          this.trackUsedMeme(channelId, meme.imageUrl);
-          return meme;
+          return finish(meme);
         }
       }
     }
 
     // Fallback to generic memes only if all else fails
     for (let attempt = 0; attempt < 2; attempt++) {
-      const meme = await this.fetchFromEndpoint(MEME_API_URL, usedMemes);
+      const meme = await this.fetchFromEndpoint(MEME_API_URL, isUsed);
       if (meme) {
-        this.trackUsedMeme(channelId, meme.imageUrl);
-        return meme;
+        return finish(meme);
       }
     }
 
     return null;
-  }
-
-  /**
-   * Track a meme as used in a channel
-   */
-  private trackUsedMeme(channelId: string | undefined, memeUrl: string): void {
-    if (!channelId) return;
-
-    if (!this.usedMemeUrls.has(channelId)) {
-      this.usedMemeUrls.set(channelId, new Set<string>());
-    }
-
-    const channelMemes = this.usedMemeUrls.get(channelId)!;
-    channelMemes.add(memeUrl);
-
-    // Limit the set size to prevent memory issues (keep last 100)
-    if (channelMemes.size > 100) {
-      const firstItem = channelMemes.values().next().value as string;
-      channelMemes.delete(firstItem);
-    }
   }
 
   /**
@@ -224,14 +218,14 @@ export class MemeService {
   /**
    * Fetch from a specific category/subreddit
    */
-  private async fetchFromCategory(category: string, usedMemes: Set<string>): Promise<Meme | null> {
+  private async fetchFromCategory(category: string, isUsed: (url: string, title?: string) => boolean): Promise<Meme | null> {
     const subreddit = this.mapCategoryToSubreddit(category);
     if (!subreddit) {
       return null;
     }
 
     for (let attempt = 0; attempt < 3; attempt++) {
-      const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`, usedMemes);
+      const meme = await this.fetchFromEndpoint(`${MEME_API_URL}/${subreddit}`, isUsed);
       if (meme) {
         return meme;
       }
@@ -305,7 +299,7 @@ export class MemeService {
     return categoryMap[normalized] || null;
   }
 
-  private async fetchFromEndpoint(endpoint: string, usedMemes: Set<string> = new Set()): Promise<Meme | null> {
+  private async fetchFromEndpoint(endpoint: string, isUsed: (url: string, title?: string) => boolean = () => false): Promise<Meme | null> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), MEME_FETCH_TIMEOUT_MS);
 
@@ -320,8 +314,8 @@ export class MemeService {
         return null;
       }
 
-      // Check if this meme has already been used
-      if (usedMemes.has(data.url)) {
+      // Skip memes (or reposts with the same title) that were posted recently
+      if (isUsed(data.url, data.title)) {
         return null;
       }
 
@@ -421,7 +415,7 @@ export class MemeService {
   }
 
   clearAll(): void {
-    this.channelStates.clear();
+    this.sessions.clear();
   }
 }
 

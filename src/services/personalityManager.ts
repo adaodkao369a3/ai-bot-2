@@ -9,6 +9,7 @@ import { Character, getCharacter, characterExists, EmojiKey, getRandomEmoji } fr
 import { Client, Guild } from 'discord.js';
 import fs from 'fs';
 import path from 'path';
+import { variety } from './variety';
 
 interface PersonalitySelectionRow {
   guild_id: string;
@@ -267,7 +268,7 @@ export class PersonalityManager {
    */
   async getCooldownMessage(guildId: string, resetTimestamp: number): Promise<string> {
     const character = await this.getActiveCharacter(guildId);
-    const messageFunc = character.cooldownMessages[Math.floor(Math.random() * character.cooldownMessages.length)];
+    const messageFunc = variety.pick(`cooldown:${guildId}`, character.cooldownMessages);
     return messageFunc(resetTimestamp);
   }
 
@@ -276,7 +277,7 @@ export class PersonalityManager {
    */
   async getDisabledMessage(guildId: string): Promise<string> {
     const character = await this.getActiveCharacter(guildId);
-    return character.disabledMessages[Math.floor(Math.random() * character.disabledMessages.length)];
+    return variety.pick(`disabled:${guildId}`, character.disabledMessages);
   }
 
   /**
@@ -284,7 +285,7 @@ export class PersonalityManager {
    */
   async getBlacklistedMessage(guildId: string): Promise<string> {
     const character = await this.getActiveCharacter(guildId);
-    return character.blacklistedMessages[Math.floor(Math.random() * character.blacklistedMessages.length)];
+    return variety.pick(`blacklisted:${guildId}`, character.blacklistedMessages);
   }
 
   /**
@@ -292,7 +293,7 @@ export class PersonalityManager {
    */
   async getErrorMessage(guildId: string): Promise<string> {
     const character = await this.getActiveCharacter(guildId);
-    return character.errorMessages[Math.floor(Math.random() * character.errorMessages.length)];
+    return variety.pick(`error:${guildId}`, character.errorMessages);
   }
 
   /**

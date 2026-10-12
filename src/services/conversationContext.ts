@@ -3,7 +3,7 @@
  * Maintains bounded recent message history for AI context
  */
 
-import { CONVERSATION_CONTEXT_MAX_MESSAGES } from '../config';
+import { CONVERSATION_CONTEXT_MAX_MESSAGES, CONVERSATION_CONTEXT_MAX_MESSAGE_LENGTH } from '../config';
 import { logger } from '../utils/logger';
 
 export interface ContextMessage {
@@ -142,7 +142,11 @@ export class ConversationContextService {
     return messages
       .map(msg => {
         const sender = msg.isBot ? 'Bocchi' : msg.username;
-        return `${sender}: ${msg.content}`;
+        // Truncate long messages to save tokens
+        const content = msg.content.length > CONVERSATION_CONTEXT_MAX_MESSAGE_LENGTH
+          ? msg.content.substring(0, CONVERSATION_CONTEXT_MAX_MESSAGE_LENGTH) + '...'
+          : msg.content;
+        return `${sender}: ${content}`;
       })
       .join('\n');
   }

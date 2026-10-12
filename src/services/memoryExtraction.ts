@@ -195,9 +195,10 @@ export class MemoryExtractionService {
         this.aiService.generateResponse({
           systemPrompt,
           userMessage: message,
-          userName: userName
+          userName: userName,
+          label: 'memory-extraction'
         }),
-        new Promise<never>((_, reject) => 
+        new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Memory extraction timeout')), MEMORY_EXTRACTION_TIMEOUT_MS)
         )
       ]);
