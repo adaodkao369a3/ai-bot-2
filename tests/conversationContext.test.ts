@@ -96,11 +96,11 @@ describe('ConversationContextService', () => {
     it('should format messages correctly', () => {
       const channelId = 'channel123';
       contextService.addMessage(channelId, 'user123', 'testuser', 'hello', false);
-      contextService.addMessage(channelId, 'bot123', 'Bot Kun', 'hi there', true);
+      contextService.addMessage(channelId, 'bot123', 'TestBot', 'hi there', true);
       
       const formatted = contextService.getFormattedContext(channelId);
       expect(formatted).toContain('testuser: hello');
-      expect(formatted).toContain('Bot Kun: hi there');
+      expect(formatted).toContain('TestBot: hi there');
     });
   });
 

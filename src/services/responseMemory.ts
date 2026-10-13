@@ -1,5 +1,5 @@
 /**
- * Response memory service for Bot-Kun
+ * Response memory service
  * Tracks the bot's recent replies per channel so it can notice when it is about to
  * say the same thing again.
  *

@@ -56,7 +56,7 @@ export class MediaService {
     const params = new URLSearchParams({
       q: query,
       key,
-      client_key: 'bot-kun',
+      client_key: 'bocchi-bot',
       limit: '20',
       media_filter: 'gif'
     });

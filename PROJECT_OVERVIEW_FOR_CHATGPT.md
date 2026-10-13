@@ -20,7 +20,7 @@ This document provides comprehensive context about the Bocchi Discord bot projec
 ## Project Structure
 
 ```
-bot_kun_2/
+ai chat/
 ├── src/
 │   ├── index.ts                    # Main entry point
 │   ├── config/

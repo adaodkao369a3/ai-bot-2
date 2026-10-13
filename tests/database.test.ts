@@ -104,10 +104,10 @@ describe('Database pool (pg)', () => {
     });
 
     it('leaves a connection string with no sslmode param untouched', () => {
-      createPool('postgresql://user:pass@host:5432/postgres?application_name=botkun');
+      createPool('postgresql://user:pass@host:5432/postgres?application_name=testbot');
 
       const config = (Pool as unknown as jest.Mock).mock.calls[0][0];
-      expect(config.connectionString).toContain('application_name=botkun');
+      expect(config.connectionString).toContain('application_name=testbot');
     });
 
     it('returns the existing pool instance if already initialized', () => {

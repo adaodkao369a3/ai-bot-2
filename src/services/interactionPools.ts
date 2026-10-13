@@ -1,5 +1,5 @@
 /**
- * Interaction pools for Bot-Kun
+ * Interaction pools
  * Provides randomized text and media responses for affection interactions
  */
 

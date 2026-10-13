@@ -1,7 +1,7 @@
-# Bot Kun Database Reset Procedure
+# Bot Database Reset Procedure
 
 ## Overview
-This document describes the procedure for resetting the Bot Kun database to a clean production baseline. Since the actual database access was not available during this audit, this procedure should be followed when database access is available.
+This document describes the procedure for resetting the bot database to a clean production baseline. Since the actual database access was not available during this audit, this procedure should be followed when database access is available.
 
 ## Pre-Reset Audit Steps
 
@@ -12,17 +12,17 @@ Before making any changes, inspect the connected Supabase project/database to de
 - Data types, primary keys, indexes
 - Unique constraints, check constraints, foreign keys
 - RLS enabled/disabled state and RLS policies
-- Triggers and functions relevant to Bot Kun
-- Views relevant to Bot Kun
+- Triggers and functions relevant to the bot
+- Views relevant to the bot
 - Migration history if available
 - Row counts for each table
 - Whether migrations 001_phase2_core_schema.sql and 002_phase3_memory_intelligence.sql are applied
 
 ### 2. Categorize Database Objects
 Categorize objects/data as:
-1. **Legacy Bot Kun** - Old bot versions that should be removed
-2. **Phase 2 Bot Kun** - Current core schema that should be preserved
-3. **Phase 3 Bot Kun** - Memory intelligence features that should be preserved
+1. **Legacy Bot** - Old bot versions that should be removed
+2. **Phase 2 Bot** - Current core schema that should be preserved
+3. **Phase 3 Bot** - Memory intelligence features that should be preserved
 4. **Unrelated data** - Data from other applications that must be protected
 
 ## Reset Procedure
@@ -33,7 +33,7 @@ Categorize objects/data as:
 -- This should be done through Supabase dashboard or pg_dump
 ```
 
-### Phase 2: Remove Obsolete Bot Kun Data
+### Phase 2: Remove Obsolete Bot Data
 ```sql
 -- Remove stale legacy users
 DELETE FROM user_profiles WHERE last_interaction_at < NOW() - INTERVAL '90 days';
@@ -78,14 +78,14 @@ After reset, verify:
 - Expected RLS policies exist
 - Expected triggers/functions exist
 - Phase 3 columns exist in `user_memories`
-- No obsolete Bot Kun schema remains
+- No obsolete bot schema remains
 - Migration ordering works from a clean database
 
 ## Cleanup Verification
 
 ### Expected Tables
 - `guild_settings` - Bot enabled/disabled state per guild
-- `blacklist` - Users blacklisted from Bot Kun
+- `blacklist` - Users blacklisted from the bot
 - `user_profiles` - User profiles and memory eligibility
 - `user_memories` - Long-term memory storage
 

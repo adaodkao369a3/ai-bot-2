@@ -1,6 +1,6 @@
-# Bot Kun v2
+# Bocchi Bot
 
-Bot Kun v2 is a TypeScript-based Discord bot backed by Supabase-hosted PostgreSQL, rebuilt from scratch with a clean architecture.
+Bocchi Bot is a TypeScript-based Discord bot backed by Supabase-hosted PostgreSQL, rebuilt from scratch with a clean architecture.
 
 ## Phase 1 Status
 
@@ -27,7 +27,7 @@ Phase 1 establishes the foundation with:
 
 1. **Install dependencies:**
    ```bash
-   cd bot_kun_2
+   cd "ai chat"
    npm install
    ```
 
@@ -80,7 +80,7 @@ Phase 1 establishes the foundation with:
 ## Project Structure
 
 ```
-bot_kun_2/
+ai chat/
 ├── src/
 │   ├── index.ts              # Main entry point
 │   ├── config/

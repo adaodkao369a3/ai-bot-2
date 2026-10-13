@@ -30,7 +30,7 @@ jest.mock('../src/services/personality', () => ({
   }
 }));
 jest.mock('../src/services/personalityManager', () => ({
-  getPersonalityManager: () => ({ getActiveCharacter: async () => ({ name: 'Bot Kun' }) })
+  getPersonalityManager: () => ({ getActiveCharacter: async () => ({ name: 'TestBot' }) })
 }));
 jest.mock('../src/services/memory', () => ({
   memoryService: {

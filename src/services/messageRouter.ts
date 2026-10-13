@@ -144,9 +144,6 @@ export class MessageRouter {
     } else if (name.includes('nocchi')) {
       // Gangster/thug personality emotions
       return ['cool anime', 'smug anime', 'confident anime', 'tough anime', 'anime cool'];
-    } else if (name.includes('bot kun')) {
-      // Sarcasm/wit personality emotions
-      return ['deadpan anime', 'sarcastic anime', 'anime facepalm', 'unimpressed anime', 'dry humor anime'];
     } else if (name.includes('heisenberg')) {
       // Intimidating/calculating personality emotions
       return ['intense anime', 'calculating anime', 'menacing anime', 'serious anime', 'cold stare anime'];
@@ -1326,7 +1323,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
 
   /**
    * Handle ~guide command
-   * Admin-only command to post the Bot-Kun guide embed in the designated channel
+   * Admin-only command to post the guide embed in the designated channel
    */
   private async handleGuide(message: Message): Promise<void> {
     if (!message.guild) return;

@@ -28,7 +28,6 @@ Changed in `src/config/index.ts`:
 
 ### 5. Condensed Prompts Created
 - Created `characterDefinitionsCondensed.ts` with condensed versions for:
-  - Bot Kun (65 lines → 12 lines)
   - Nocchi (70 lines → 12 lines)
   - Bocchi Shy (60 lines → 12 lines)
   - Heisenberg (70 lines → 12 lines)

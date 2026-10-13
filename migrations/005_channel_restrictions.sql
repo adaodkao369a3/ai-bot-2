@@ -1,4 +1,4 @@
--- Channel restrictions for Bot Kun v2
+-- Channel restrictions
 -- Allows restricting bot to specific channels per guild
 
 CREATE TABLE IF NOT EXISTS channel_restrictions (

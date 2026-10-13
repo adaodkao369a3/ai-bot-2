@@ -1,4 +1,4 @@
--- Phase 2 Core Schema for Bot Kun v2
+-- Phase 2 Core Schema
 -- This migration establishes the foundation for:
 -- - Global bot state (enabled/disabled)
 -- - Blacklist system
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS guild_settings (
 -- Index for faster guild lookups
 CREATE INDEX IF NOT EXISTS idx_guild_settings_guild_id ON guild_settings(guild_id);
 
--- Blacklist table for users blacklisted from Bot Kun
+-- Blacklist table for users blacklisted from the bot
 CREATE TABLE IF NOT EXISTS blacklist (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id TEXT NOT NULL,

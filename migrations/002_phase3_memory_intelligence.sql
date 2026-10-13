@@ -1,4 +1,4 @@
--- Phase 3 Memory Intelligence Schema for Bot Kun v2
+-- Phase 3 Memory Intelligence Schema
 -- This migration adds fields for advanced memory management:
 -- - Memory type categorization
 -- - Normalized content for duplicate detection

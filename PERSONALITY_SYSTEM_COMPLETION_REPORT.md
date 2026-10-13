@@ -1,14 +1,14 @@
 # Personality System Implementation - Completion Report
 
 ## Summary
-Successfully implemented a complete selectable personality system for Bocchi Discord bot with extensible architecture for adding new characters in batches of three.
+Successfully implemented a complete selectable personality system for Bocchi Discord bot with extensible architecture for adding new characters.
 
 ## Files Changed
 
 ### New Files Created
 1. **migrations/004_personality_selection.sql** - Database migration for personality selection storage
 2. **src/config/characters.ts** - Character registry architecture with type definitions
-3. **src/config/characterDefinitions.ts** - Three character definitions (Bot Kun, Bocchi Thug, Bocchi Shy)
+3. **src/config/characterDefinitions.ts** - Two character definitions (Bocchi Thug, Bocchi Shy)
 4. **src/services/personalityManager.ts** - Personality management service with database integration
 
 ### Modified Files
@@ -35,14 +35,7 @@ Created `personality_selection` table with:
 - Helper functions for character lookup and emoji management
 - Semantic emoji keys (laugh, embarrassed, annoyed, smug, sad, confused, etc.)
 
-### 3. Three Character Definitions
-
-#### Bot Kun (bot_kun)
-- Original sarcastic Gen Z smartass personality
-- Casual, dry, deadpan, witty
-- Uses modern internet phrasing naturally
-- Can switch to genuinely helpful when needed
-- Distinct emoji vocabulary with 💀 and 😭
+### 3. Two Character Definitions
 
 #### Bocchi Thug (bocchi_thug)
 - Current gangster McDonald's worker personality
@@ -123,8 +116,7 @@ Verify that the `personality_selection` table was created successfully.
 
 #### 3. Personality Command
 - Use `~personality` command as a staff member
-- Verify select menu appears with three options:
-  - Bot Kun - The original sarcastic Gen Z smartass
+- Verify select menu appears with two options:
   - Bocchi (Thug) - The current gangster McDonald's worker personality
   - Bocchi (Shy) - A shy, anxious, awkward, overthinking version of Bocchi
 - Select each personality and verify:
@@ -263,7 +255,7 @@ The following characters are planned for future batches but NOT implemented in t
 
 ## Success Criteria Met
 ✅ Extensible character system architecture
-✅ Three character definitions implemented (Bot Kun, Bocchi Thug, Bocchi Shy)
+✅ Two character definitions implemented (Bocchi Thug, Bocchi Shy)
 ✅ Admin-only ~personality command with Discord select menu
 ✅ Database persistence across restarts
 ✅ Nickname change functionality

@@ -78,14 +78,6 @@ describe('AddressingService', () => {
         expect(await addressingService.isNameAddress(message as any, guildId)).toBe(true);
       });
 
-      it('should return true for "Bot Kun" invocation name', async () => {
-        mockPersonalityManager.getActiveCharacter.mockResolvedValue({
-          invocationNames: ['Bot Kun', 'BotKun', 'bot kun', 'botkun']
-        });
-        const message = new MockMessage('bot kun what\'s up');
-        expect(await addressingService.isNameAddress(message as any, guildId)).toBe(true);
-      });
-
       it('should return true for "Heisenberg" invocation name', async () => {
         mockPersonalityManager.getActiveCharacter.mockResolvedValue({
           invocationNames: ['Heisenberg', 'heisenberg']
@@ -272,15 +264,6 @@ describe('AddressingService', () => {
       const message = new MockMessage('bocchi hello world');
       const extracted = await addressingService.extractContent(message as any, botUserId, guildId);
       expect(extracted).toBe('hello world');
-    });
-
-    it('should remove "Bot Kun" variation', async () => {
-      mockPersonalityManager.getActiveCharacter.mockResolvedValue({
-        invocationNames: ['Bot Kun', 'BotKun', 'bot kun', 'botkun']
-      });
-      const message = new MockMessage('bot kun hello');
-      const extracted = await addressingService.extractContent(message as any, botUserId, guildId);
-      expect(extracted).toBe('hello');
     });
 
     it('should remove punctuation after name', async () => {

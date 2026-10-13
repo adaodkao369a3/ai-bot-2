@@ -1,5 +1,5 @@
 /**
- * Security tests for Bot Kun v2
+ * Security tests
  * Tests mention sanitization, response normalization, and prompt injection defenses
  */
 
