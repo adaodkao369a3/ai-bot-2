@@ -555,11 +555,11 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
             const personalityManager = getPersonalityManager();
             const activeCharacter = await personalityManager.getActiveCharacter(guildId);
 
-            // Search for GIF based on personality emotion (not just name)
-            const emotionQueries = this.getPersonalityEmotionQueries(activeCharacter?.name);
+            // Use character-specific GIF queries if available, otherwise fall back to emotion queries
+            const gifQueries = activeCharacter?.gifQueries || this.getPersonalityEmotionQueries(activeCharacter?.name);
 
-            // Try each emotion query until we find a GIF that was not posted recently
-            for (const query of emotionQueries) {
+            // Try each query until we find a GIF that was not posted recently
+            for (const query of gifQueries) {
               const gifResult = await mediaService.searchGif(query, recentMedia.predicate(gifScope));
 
               if (gifResult) {
@@ -569,6 +569,7 @@ When the user asks about "they", "them", "that person", "this guy", "he", "she",
                 logger.info('Attached GIF to response', {
                   channelId,
                   query,
+                  character: activeCharacter?.name,
                   totalUsed: recentMedia.size(gifScope)
                 });
                 break;

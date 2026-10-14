@@ -54,6 +54,8 @@ export interface Character {
   errorMessages: string[];
   /** Character world context - relationships, environment, life details (optional) */
   characterWorld?: string;
+  /** GIF search queries specific to this character for personality-appropriate GIFs */
+  gifQueries: string[];
 }
 
 /**
